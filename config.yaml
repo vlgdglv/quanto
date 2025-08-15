@@ -25,7 +25,7 @@ datafeed:
   # 三类 K 线：trade / mark / index  → 映射到 candle / mark-price-candle / index-candle
   channels:
     candles:
-      fetch: true
+      fetch: false
       kind: "trade"
       bars: ["1m","5m","4H"]
     trades:
@@ -35,6 +35,8 @@ datafeed:
       level: 400
     funding-rate:
       fetch: true
+    open-interest:
+      fetch: true
     
 
   ws_kind_per_channel:
@@ -42,7 +44,8 @@ datafeed:
     trades:       public
     books:        public
     mark-price:   business
-    funding-rate: business
+    funding-rate: public
+    open-interest: public
 
   # 是否使用 business 域（订 mark-price/index-* 时通常为 true）
   use_business: true

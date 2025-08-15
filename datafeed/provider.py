@@ -61,13 +61,18 @@ def _build_fundingrate_args(channel_cfg: Dict[str, Any], insts: List[str]) -> Li
         return []
     return [{"channel": "funding-rate", "instId": inst} for inst in insts]
 
+def _build_openinterest_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+    if not channel_cfg.get("fetch", False):
+        return []
+    return [{"channel": "open-interest", "instId": inst} for inst in insts]
+
 _channel_builders = {
     "candles": _build_candle_args,
     "trades": _build_trade_args,
     "books": _build_book_args,
     "mark-price": _build_marketprice_args,
-    "funding-rate": _build_fundingrate_args
-
+    "funding-rate": _build_fundingrate_args,
+    "open-interest": _build_openinterest_args
 }
 
 def build_subscribe_args(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -94,7 +99,8 @@ def _ws_kind_for_channle(cfg: Dict[str, Any], category: str) -> str:
         "trades": "public",
         "books": "public",
         "mark-price": "business",
-        "funding-rate": "business",
+        "funding-rate": "public",
+        "open-interest": "public",
     }
     override = cfg.get("datafeed", {}).get("ws_kind_per_channel", {})
     return override.get(category, defaults.get(category, "public"))

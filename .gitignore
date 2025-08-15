@@ -32,6 +32,7 @@ ENV/
 env/
 .venv/
 .env/
+.env
 
 # PyInstaller
 # 一般会生成一些临时文件和日志
