@@ -1,0 +1,83 @@
+# 编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C 扩展
+*.so
+
+# 分发/打包
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv/
+.env/
+
+# PyInstaller
+# 一般会生成一些临时文件和日志
+*.manifest
+*.spec
+
+# 单元测试 / 覆盖率报告
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+*.db
+*.sqlite
+.pytest_cache/
+
+# 临时 & 日志文件
+*.log
+*.pot
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDE 配置文件
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# mypy / 类型检查
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pyre 类型检查
+.pyre/
+
+# pytype
+.pytype/
+
+# profiling 数据
+.prof
+
+/data/*
