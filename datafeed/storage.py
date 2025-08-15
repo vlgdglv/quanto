@@ -111,6 +111,24 @@ class DiskStore:
         self._append_csv(self._p(kind, inst), sub[["ts","open","high","low","close","aux"]])
         self._last_ts[key] = int(sub["ts"].max())
 
+    def append_openinterest(self, inst: str, df: pd.DataFrame):
+        if df is None or df.empty: return
+        key = f"openinterest:{inst}"
+        last = self._last_ts.get(key, -1)
+        sub = df[df["ts"] > last]
+        if sub.empty: return
+        self._append_csv(self._p("open_interest", inst), sub[["ts","oi","oiCcy","oiUsd"]])
+        self._last_ts[key] = int(sub["ts"].max())
+
+    def append_fundingrate(self, inst: str, df: pd.DataFrame):
+        if df is None or df.empty: return
+        key = f"fundingrate:{inst}"
+        last = self._last_ts.get(key, -1)
+        sub = df[df["ts"] > last]
+        if sub.empty: return
+        self._append_csv(self._p("funding_rate", inst), sub[["ts","fundingRate"]])
+        self._last_ts[key] = int(sub["ts"].max())
+
     
 
 
@@ -118,23 +136,6 @@ class CompositeStore:
     def __init__(self, mem: MemoryStore, disk: DiskStore):
         self.mem = mem
         self.disk = disk
-
-    # def write_df(self, kind: str, df: pd.DataFrame):
-    #     if df is None or df.empty: return
-    #     base_kind, policy = _resolve_policy(kind)
-    #     cols = policy["cols"]
-    #     on = policy["on"]
-    #     parser = policy.get("parse", lambda _: {})  # default empty
-
-    #     for inst, sub in df.groupby("instId"):
-    #         key = f"{kind}:{inst}"
-    #         self.mem.upsert(key, sub[cols], on=on)
-
-    #         # 解析实际磁盘 kind（仅 candle 用）
-    #         meta = parser(kind)
-    #         disk_kind = kind if base_kind != "candle" else f"candle_{meta['ktype']}_{meta['bar']}"
-
-    #         self.disk.append(disk_kind, inst, sub, cols=cols, on=on)
 
     def write_candle(self, inst: str, ktype: str, bar: str, df: pd.DataFrame):
         """
@@ -153,7 +154,6 @@ class CompositeStore:
     def write_trades(self, df: pd.DataFrame):
         if df is None or df.empty: return
         for inst, sub in df.groupby("instId"):
-            # 内存仍做全量（便于实时读取），磁盘只 append
             self.mem.upsert(f"trades:{inst}", sub[["ts","px","sz","side","tradeId"]], on=["ts","tradeId"])
             self.disk.append_trades(inst, sub)
 
@@ -163,16 +163,14 @@ class CompositeStore:
             self.mem.upsert(f"books5:{inst}", sub[["ts","best_bid","best_ask"]], on=["ts"])
             self.disk.append_books5(inst, sub)
 
-    # # Trades
-    # def write_trades(self, df: pd.DataFrame):
-    #     for inst, sub in df.groupby("instId"):
-    #         key = f"trades:{inst}"
-    #         self.mem.upsert(key, sub, on=["ts","tradeId"])
-    #         self.disk.upsert(kind="trades", inst=inst, df=sub, on=["ts","tradeId"])
-
-    # # Books（简化只写 best_bid/ask）
-    # def write_books(self, df: pd.DataFrame):
-    #     for inst, sub in df.groupby("instId"):
-    #         key = f"books5:{inst}"
-    #         self.mem.upsert(key, sub, on=["ts"])
-    #         self.disk.upsert(kind="books5", inst=inst, df=sub, on=["ts"])
+    def write_openinterest(self, df: pd.DataFrame):
+        if df is None or df.empty: return
+        for inst, sub in df.groupby("instId"):
+            self.mem.upsert(f"open_interest:{inst}", sub[["ts","oi"]], on=["ts"])
+            self.disk.append_openinterest(inst, sub)
+        
+    def write_fundingrate(self, df: pd.DataFrame):
+        if df is None or df.empty: return
+        for inst, sub in df.groupby("instId"):
+            self.mem.upsert(f"funding_rate:{inst}", sub[["ts","fundingRate"]], on=["ts"])
+            self.disk.append_fundingrate(inst, sub)

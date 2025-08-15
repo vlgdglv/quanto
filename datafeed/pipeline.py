@@ -52,9 +52,7 @@ class DataPipeline:
                 df = handler(msg)
                 if df is None or df.empty:
                     return
-                
-                # df["instId"] = inst
-                # self.store.write_df(prefix, df)
+
                 if ch.startswith(("candle", "mark-price-candle", "index-candle")):
                     bar = ch.replace("mark-price-candle","").replace("index-candle","").replace("candle","")
                     self.store.write_candle(inst, prefix, bar, df)
@@ -62,8 +60,10 @@ class DataPipeline:
                     self.store.write_trades(df)
                 elif prefix == "books":
                     self.store.write_books(df)
+                elif prefix == "open-interest": 
+                    self.store.write_openinterest(df)
                 elif prefix == "funding-rate":
-                    self.store.write_funding_rate(df)
+                    self.store.write_fundingrate(df)
                 else:
                     return
 
