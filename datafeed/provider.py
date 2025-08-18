@@ -1,6 +1,7 @@
 # datafeed/provider_okx.py
-from typing import Dict, Any, Iterable, List, Tuple, DefaultDict
+from typing import Dict, Any, Iterable, List, Set, DefaultDict
 from collections import defaultdict
+import re
 
 # def build_ws_url(cfg: dict) -> str:
 #     mode = cfg["env"]["mode"]  # paper | live
@@ -11,6 +12,38 @@ from collections import defaultdict
 #     # 默认公共
 #     return ws_cfg.get("public", ws_cfg.get("business"))
 
+def _index_from_inst(inst: str) -> str:
+    """
+    把合约/期货/期权的 instId 还原成指数ID（uly）：
+      ETH-USDT-SWAP        -> ETH-USDT
+      BTC-USD-240927       -> BTC-USD
+      BTC-USD-240927-40000-C  -> BTC-USD  (期权)
+      以及已经是指数ID的 ETH-USDT 保持不变
+    """
+    parts = inst.split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return inst
+
+_inst_type_pat_futures = re.compile(r"-\d{6,8}$") 
+
+def _inst_type_from_inst(inst: str) -> str:
+    """
+    从 instId 粗略推断 instType：SWAP / FUTURES / OPTION / SPOT
+    （若 channel_cfg 显式给了 instType(s)，优先用配置）
+    """
+    if inst.endswith("-SWAP"):
+        return "SWAP"
+    if _inst_type_pat_futures.search(inst):
+        return "FUTURES"
+    # 简单判断期权：...-strike-(C|P)
+    parts = inst.split("-")
+    if len(parts) >= 5 and parts[-1] in ("C", "P"):
+        return "OPTION"
+    # 两段形如 BTC-USDT 基本可视作现货/杠杆（MARGIN）
+    if inst.count("-") == 1:
+        return "MARGIN"
+    return "ANY"
 
 def build_ws_url(cfg: dict, ws_kind: str) -> str:
     mode = cfg["env"]["mode"]  # paper | live
@@ -40,7 +73,6 @@ def _build_book_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict
     if not channel_cfg.get("fetch", False):
         return []
     level = channel_cfg.get("level", 400)
-    
     if level == 400:
         ch = "books"
     elif level == 5:
@@ -51,28 +83,89 @@ def _build_book_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict
         ch = "books"
     return [{"channel": ch, "instId": inst} for inst in insts]
 
-def _build_marketprice_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+def _build_market_price_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "mark-price", "instId": inst} for inst in insts]
 
-def _build_fundingrate_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+def _build_funding_rate_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "funding-rate", "instId": inst} for inst in insts]
 
-def _build_openinterest_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+def _build_open_interest_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "open-interest", "instId": inst} for inst in insts]
+
+def _build_index_tickers_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+    """
+    指数频道 index-tickers 必须订阅“指数ID”（与 uly 相同），
+    不能用合约ID（不能带 -SWAP / -YYYYMMDD 等尾缀）。
+    这里对传入 insts 做归一化与去重。
+    """
+    if not channel_cfg.get("fetch", False):
+        return []
+
+    # 允许用户传 ETH-USDT-SWAP 或 BTC-USD-240927，我们统一映射为 ETH-USDT / BTC-USD
+    idx_ids: List[str] = [_index_from_inst(x) for x in insts]
+    # 去重并保持原有顺序
+    seen: Set[str] = set()
+    deduped = []
+    for x in idx_ids:
+        if x not in seen:
+            seen.add(x)
+            deduped.append(x)
+
+    return [{"channel": "index-tickers", "instId": idx} for idx in deduped]
+
+
+def _build_liquidation_orders_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+    """
+    清算频道 liquidation-orders 只接受 instType，不接受 instId。
+    OKX 会按 instType 推送该类型下所有合约的清算快照（每合约每秒最多一条）。
+    这里支持三种来源：
+      1) channel_cfg["instTypes"] = ["SWAP","FUTURES",...]  显式指定（优先）
+      2) channel_cfg["instType"] = "SWAP"                  单个指定
+      3) 由 insts 自动推断出类型集合（如传入若干 instId）
+    """
+    if not channel_cfg.get("fetch", False):
+        return []
+
+    # 优先使用配置覆盖
+    if "instTypes" in channel_cfg and channel_cfg["instTypes"]:
+        types = list(dict.fromkeys([t.upper() for t in channel_cfg["instTypes"]]))
+    elif "instType" in channel_cfg and channel_cfg["instType"]:
+        types = [channel_cfg["instType"].upper()]
+    else:
+        # 从 insts 猜测类型集合
+        guessed = [ _inst_type_from_inst(x) for x in insts ]
+        # 只保留 OKX 文档允许的四类
+        allow = {"SWAP","FUTURES","MARGIN","OPTION"}
+        types = [t for t in dict.fromkeys(guessed) if t in allow]
+        # 如果完全猜不到，就默认订 SWAP（常见）
+        if not types:
+            types = ["SWAP"]
+
+    return [{"channel": "liquidation-orders", "instType": t} for t in types]
+
+
+def _build_price_limit_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
+    if not channel_cfg.get("fetch", False):
+        return []
+    return [{"channel": "price-limit", "instId": inst} for inst in insts]
+
 
 _channel_builders = {
     "candles": _build_candle_args,
     "trades": _build_trade_args,
     "books": _build_book_args,
-    "mark-price": _build_marketprice_args,
-    "funding-rate": _build_fundingrate_args,
-    "open-interest": _build_openinterest_args
+    "funding-rate": _build_funding_rate_args,
+    "open-interest": _build_open_interest_args,
+    "mark-price": _build_market_price_args,
+    "index-tickers": _build_index_tickers_args,
+    "liquidation-orders": _build_liquidation_orders_args,
+    "price-limit": _build_price_limit_args,
 }
 
 def build_subscribe_args(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:

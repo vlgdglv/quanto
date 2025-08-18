@@ -4,7 +4,6 @@ from typing import Dict, Any, Callable, List, Optional
 import pandas as pd
 
 HandlerFunc = Callable[[Dict[str, Any]], pd.DataFrame]
-
 channel_registry: Dict[str, HandlerFunc] = {}
 
 def register_channel(prefix: str):
@@ -41,46 +40,23 @@ def handle_candle(msg: Dict[str, Any]) -> pd.DataFrame:
     elif ch.startswith("index-candle"):     ktype = "index-candle"
     else:                                   ktype = "candle"
 
-    return normalize_ws_candles(msg, ktype=ktype)
-
-@register_channel("trades")
-def handle_trades(msg: Dict[str, Any]) -> pd.DataFrame:
-    return normalize_ws_trades(msg)
-
-@register_channel("books")
-def handle_books(msg: Dict[str, Any]) -> pd.DataFrame:
-    return normalize_ws_books(msg)
-
-@register_channel("open-interest")
-def handle_open_interest(msg: Dict[str, Any]) -> pd.DataFrame:
-    return normalize_ws_open_interest(msg)
-
-@register_channel("funding-rate")
-def handle_funding_rate(msg: Dict[str, Any]) -> pd.DataFrame:
-    return normalize_ws_funding_rate(msg)
-
-def normalize_rest_candles(rows: List[List[str]]) -> pd.DataFrame:
-    # OKX 可能返回倒序，这里统一按 ts 升序
-    out = []
-    for r in rows:
-        ts, o, h, l, c, vol = int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])
-        out.append({"ts": ts, "dt": _dt(ts), "open": o, "high": h, "low": l, "close": c, "vol": vol})
-    return pd.DataFrame(out).sort_values("ts").reset_index(drop=True)
-
-def normalize_ws_candles(msg: Dict[str,Any], ktype: str) -> pd.DataFrame:
     arg = msg.get("arg", {})
+    inst = arg.get("instId","")
     data = msg.get("data", [])
     if not data:
-        return pd.DataFrame(columns=["ts","open","high","low","close","aux"])
+        return pd.DataFrame(columns=["ts","open","high","low","close","vol","volCcy","volCcyQuote","confirm"])
 
     rows = []
     for r in data:
         ts = int(r[0])
         o, h, l, c = map(float, r[1:5])
-        vol_or_flag = r[5] if len(r) > 5 else None
-        rows.append({"ts": ts, "open": o, "high": h, "low": l, "close": c, "aux": vol_or_flag})
+        vol = r[5] if len(r) > 5 else None
+        volCcy, volCcyQuote = float(r[6]) if len(r) > 6 else None, float(r[7]) if len(r) > 7 else None
+        confirm = r[8] if len(r) > 8 else None
+        rows.append({"ts": ts, "open": o, "high": h, "low": l, "close": c, 
+                     "vol": vol, "volCcy": volCcy, "volCcyQuote": volCcyQuote, 
+                     "confirm": confirm})
 
-    # 仅保留数值列；ts 升序 & 去重（按 ts）
     return (
         pd.DataFrame(rows)
         .sort_values("ts")
@@ -88,7 +64,8 @@ def normalize_ws_candles(msg: Dict[str,Any], ktype: str) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-def normalize_ws_trades(msg: Dict[str,Any]) -> pd.DataFrame:
+@register_channel("trades")
+def handle_trades(msg: Dict[str, Any]) -> pd.DataFrame:
     arg, data = msg.get("arg", {}), msg.get("data", [])
     inst = arg.get("instId","")
     rows = []
@@ -101,7 +78,8 @@ def normalize_ws_trades(msg: Dict[str,Any]) -> pd.DataFrame:
         })
     return pd.DataFrame(rows).sort_values("ts")
 
-def normalize_ws_books(msg: Dict[str,Any]) -> pd.DataFrame:
+@register_channel("books")
+def handle_books(msg: Dict[str, Any]) -> pd.DataFrame:
     arg, data = msg.get("arg", {}), msg.get("data", [])
     if not data: return pd.DataFrame()
     inst = arg.get("instId","")
@@ -111,12 +89,21 @@ def normalize_ws_books(msg: Dict[str,Any]) -> pd.DataFrame:
     asks = [(float(p), float(q)) for p,q,*_ in snap.get("asks", [])]
     best_bid = bids[0][0] if bids else None
     best_ask = asks[0][0] if asks else None
+    bid_sz5 = sum(q for _, q in bids[:5]) if bids else None
+    ask_sz5 = sum(q for _, q in asks[:5]) if asks else None
+    obi_5 = None
+    if bid_sz5 and ask_sz5:
+        denom = (bid_sz5 or 0) + (ask_sz5 or 0)
+        obi_5 = ((bid_sz5 - ask_sz5) / denom) if denom and denom > 0 else 0.0
     return pd.DataFrame([{
         "instId": inst, "ts": ts, "dt": _dt(ts),
-        "best_bid": best_bid, "best_ask": best_ask
+        "best_bid": best_bid, "best_ask": best_ask,
+        "bid_sz5": bid_sz5, "ask_sz5": ask_sz5,
+        "obi_5": obi_5
     }])
 
-def normalize_ws_open_interest(msg: Dict[str,Any]) -> pd.DataFrame:
+@register_channel("open-interest")
+def handle_open_interest(msg: Dict[str, Any]) -> pd.DataFrame:
     """
     OKX WS channel: 'open-interest'
     Push example & fields: oi, oiCcy, oiUsd, ts, instId, instType
@@ -144,7 +131,8 @@ def normalize_ws_open_interest(msg: Dict[str,Any]) -> pd.DataFrame:
             .reset_index(drop=True)
     )
 
-def normalize_ws_funding_rate(msg: Dict[str,Any]) -> pd.DataFrame:
+@register_channel("funding-rate")
+def handle_funding_rate(msg: Dict[str, Any]) -> pd.DataFrame:
     """
     OKX WS channel: 'funding-rate'
     Push fields (精简常用数值 + 时间戳)：
@@ -176,6 +164,88 @@ def normalize_ws_funding_rate(msg: Dict[str,Any]) -> pd.DataFrame:
             "fundingTime": _to_int_ms(d.get("fundingTime")),
             "nextFundingTime": _to_int_ms(d.get("nextFundingTime")),
             "instId": d.get("instId"),
+        })
+
+    return (
+        pd.DataFrame(rows)
+        .dropna(subset=["ts"])
+        .sort_values("ts")
+        .drop_duplicates(subset=["ts"])
+        .reset_index(drop=True)
+    )
+
+@register_channel("mark-price")
+def handle_mark_price(msg: Dict[str, Any]) -> pd.DataFrame:
+    data = msg.get("data", [])
+    if not data:
+        return pd.DataFrame(columns=["ts","markPx"])
+    rows = [{"ts": _to_int_ms(d.get("ts")), "markPx": _to_float(d.get("markPx"))} for d in data]
+    return (pd.DataFrame(rows).dropna(subset=["ts"])
+            .sort_values("ts").drop_duplicates(subset=["ts"]).reset_index(drop=True))
+
+@register_channel("index-tickers")
+def handle_index_tickers(msg: Dict[str, Any]) -> pd.DataFrame:
+    data = msg.get("data", [])
+    if not data:
+        return pd.DataFrame(columns=["ts","idxPx"])
+    rows = [{"ts": _to_int_ms(d.get("ts")), "idxPx": _to_float(d.get("idxPx"))} for d in data]
+    return (pd.DataFrame(rows).dropna(subset=["ts"])
+            .sort_values("ts").drop_duplicates(subset=["ts"]).reset_index(drop=True))
+
+@register_channel("liquidation-orders")
+def handle_liquidations(msg: Dict[str, Any]) -> pd.DataFrame:
+    """
+    注意：该频道每合约每秒最多一条，不代表全量清算；fields 见官方示例。
+    """
+    data = msg.get("data", [])
+    if not data:
+        return pd.DataFrame(columns=[
+            "ts","instId","instFamily","uly","side","posSide","sz","bkPx","bkLoss"
+        ])
+    rows: List[Dict[str, Any]] = []
+    for d in data:
+        base = {
+            "instId": d.get("instId"),
+            "instFamily": d.get("instFamily"),
+            "uly": d.get("uly"),
+        }
+        for it in d.get("details", []) or []:
+            rows.append({
+                **base,
+                "ts": _to_int_ms(it.get("ts")),
+                "side": it.get("side"),
+                "posSide": it.get("posSide"),
+                "sz": _to_float(it.get("sz")),
+                "bkPx": _to_float(it.get("bkPx")),
+                "bkLoss": _to_float(it.get("bkLoss")),
+            })
+    return (
+        pd.DataFrame(rows)
+        .dropna(subset=["ts"])
+        .sort_values(["ts","instId"])
+        .drop_duplicates(subset=["ts","instId","side","posSide","sz"], keep="last")
+        .reset_index(drop=True)
+    )
+
+@register_channel("price-limit")
+def handle_price_limit(msg: Dict[str, Any]) -> pd.DataFrame:
+    """
+    WS channel: 'price-limit'
+    Push fields: buyLmt, sellLmt, enabled, ts（另含 instId/instType）
+    Docs: OKX V5 WebSocket / Price limit channel
+    """
+    data = msg.get("data", [])
+    if not data:
+        return pd.DataFrame(columns=["ts", "buyLmt", "sellLmt", "enabled"])
+
+    rows: List[Dict[str, Any]] = []
+    for d in data:
+        rows.append({
+            "ts": _to_int_ms(d.get("ts")),
+            "buyLmt": _to_float(d.get("buyLmt")),
+            "sellLmt": _to_float(d.get("sellLmt")),
+            # enabled 为 bool；转为 1/0 以保持“仅数值列”风格
+            "enabled": int(bool(d.get("enabled"))) if d.get("enabled") is not None else None,
         })
 
     return (

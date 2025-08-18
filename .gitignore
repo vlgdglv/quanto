@@ -82,3 +82,5 @@ dmypy.json
 .prof
 
 /data/*
+
+.DS_Store
