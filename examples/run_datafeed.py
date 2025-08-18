@@ -1,7 +1,7 @@
 # examples/run_datafeed.py
 import asyncio, yaml
 from pathlib import Path
-from datafeed.pipeline import DataPipeline
+from datafeed.pipeline import DataPipeline, WriteProcessor
 from datafeed.storage import MemoryStore, DiskStore, CompositeStore
 
 def load_cfg():
@@ -13,8 +13,8 @@ async def main():
     mem = MemoryStore()
     disk = DiskStore(cfg["datafeed"]["out_dir"], cfg["datafeed"].get("backend", "csv"))
     store = CompositeStore(mem, disk)
-
-    pipe = DataPipeline(cfg, store)
+    write_processor = WriteProcessor(cfg, store)
+    pipe = DataPipeline(cfg, write_processor)
     try:
         await pipe.run()
     except KeyboardInterrupt:
