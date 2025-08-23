@@ -1,6 +1,6 @@
 # data/ws_public.py
 from utils.logger import logger
-
+import contextlib
 import asyncio, json, time, websockets
 from typing import Dict, Any, Callable, Awaitable, Iterable, Optional
 
@@ -44,7 +44,7 @@ class WSClient:
         ts = str(int(time.time()))
 
         msg = ts + 'GET' + '/users/self/verify'
-        sign = base64.b64decode(hmac.new(self.secret_key.encode(), msg.encode(), hashlib.sha256).digest()).decode()
+        sign = base64.b64encode(hmac.new(self.secret_key.encode(), msg.encode(), hashlib.sha256).digest()).decode()
         payload = {
             "op": "login",
             "args":[{
@@ -70,7 +70,7 @@ class WSClient:
         payload = {"op": "subscribe", "args": self.args}
         await self._ws.send(json.dumps(payload))
     
-    async def _hearbeat(self):
+    async def _heartbeat(self):
         while not self._stop and self._ws:
             try:
                 await self._ws.ping()
@@ -80,10 +80,24 @@ class WSClient:
     
     async def run_forever(self, on_json: OnJson):
         retry = 0
+        msg_queue: asyncio.Queue = asyncio.Queue(maxsize=8192)
+
+        async def consumer():
+            while not self._stop:
+                msg = await msg_queue.get()
+                try:
+                    await on_json(msg)
+                except Exception:
+                    logger.exception("On_json error!")
+                finally:
+                    msg_queue.task_done()
+
         while not self._stop:
+            hb = None
+            consumer_task = None
             try:
                 logger.info(f"WS connect: connecting to {self.url} (retry={retry})")
-                async with websockets.connect(self.url, ping_interval=self.ping_interval) as ws:
+                async with websockets.connect(self.url, ping_interval=None, close_timeout=30) as ws:
                     self._ws = ws
                     logger.info("WS connect: connected")
                     if self.need_login:
@@ -91,29 +105,51 @@ class WSClient:
                     await self._subscribe()
                     logger.info("WS subscribe: sent, start receiving")
 
-                    hb = asyncio.create_task(self._hearbeat())
+                    consumer_task = asyncio.create_task(consumer())
+                    hb = asyncio.create_task(self._heartbeat())
                     async for msg in ws:
-                        data = json.loads(msg)
+                        try:
+                            data = json.loads(msg)
+                        except Exception:
+                            continue
+
                         if "event" in data:
                             logger.info(f"WS {data.get('event')}: {data}")
                             continue
-                        await on_json(data)
-                    hb.cancel()
+
+                        try:
+                            msg_queue.put_nowait(data)
+                        except asyncio.QueueFull:
+                            logger.warning("WS queue full, dropping a message")
+            except asyncio.CancelledError:
+                raise        
             except Exception as e:
                 logger.exception("WS loop: exception")
                 backoff = min(self.reconnect_cap_s, 2 ** min(retry, 6))
                 await asyncio.sleep(backoff)
                 retry += 1
             finally:
+                if hb:
+                    hb.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await hb
+                if consumer_task:
+                    consumer_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer_task
                 try:
                     if self._ws:
                         await self._ws.close()  
-                    logger.info("WS close: websocket closed")
-                except:
+                except Exception:
                     pass
+                finally:
+                    self._ws = None
+                logger.info("WS close: websocket closed")
+                
     
     async def stop(self):
         self._stop = True   
         if self._ws:
-            await self._ws.close()
+            with contextlib.suppress(Exception):
+                await self._ws.close()
             logger.info("WS stop: websocket closed")

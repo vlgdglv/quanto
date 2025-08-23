@@ -91,15 +91,15 @@ def handle_books(msg: Dict[str, Any]) -> pd.DataFrame:
     best_ask = asks[0][0] if asks else None
     bid_sz5 = sum(q for _, q in bids[:5]) if bids else None
     ask_sz5 = sum(q for _, q in asks[:5]) if asks else None
-    obi_5 = None
-    if bid_sz5 and ask_sz5:
-        denom = (bid_sz5 or 0) + (ask_sz5 or 0)
-        obi_5 = ((bid_sz5 - ask_sz5) / denom) if denom and denom > 0 else 0.0
+    # obi_5 = None
+    # if bid_sz5 and ask_sz5:
+    #     denom = (bid_sz5 or 0) + (ask_sz5 or 0)
+    #     obi_5 = ((bid_sz5 - ask_sz5) / denom) if denom and denom > 0 else 0.0
     return pd.DataFrame([{
         "instId": inst, "ts": ts, "dt": _dt(ts),
         "best_bid": best_bid, "best_ask": best_ask,
         "bid_sz5": bid_sz5, "ask_sz5": ask_sz5,
-        "obi_5": obi_5
+        "bids": bids, "asks": asks
     }])
 
 @register_channel("open-interest")
