@@ -29,9 +29,9 @@ datafeed:
       kind: "trade"
       bars: ["1m","5m","4H"]
     trades:
-      fetch: false
+      fetch: true
     books:
-      fetch: false
+      fetch: true
       level: 5
     funding-rate:
       fetch: false
@@ -48,7 +48,6 @@ datafeed:
       fetch: false
     
     
-
   ws_kind_per_channel:
     candles:      business
     trades:       public
@@ -74,6 +73,21 @@ datafeed:
 
   out_dir: "data/feed"
   store_backend: "csv"   # csv | parquet
+
+persist:
+  csv_path: "data/features.csv"
+  sqlite_path: "data/features.db"
+  sqlite_table: "features"
+  flush_interval_s: 5
+  max_buffer_rows: 10
+
+agent:
+  min_snapshot_interval_ms: 600_000
+  align_to_5m: false
+
+cold_start:
+  duration_sec: 600
+  min_snapshots: 0
 
 auth:
   api_key: "${API_KEY}"

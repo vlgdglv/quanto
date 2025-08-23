@@ -3,7 +3,8 @@ import asyncio, yaml
 from pathlib import Path
 from datafeed.pipeline import DataPipeline, FeatureEngineProcessor
 from feature.engine_pd import FeatureEnginePD
-from feature.integrate import process_msg
+from feature.writer import FeatureWriter
+from feature.sinks import CSVFeatureSink
 
 
 def load_cfg():
@@ -12,13 +13,28 @@ def load_cfg():
     
 async def main():
     cfg = load_cfg()
+    persist_cfg = (cfg or {}).get("persist", {})
+    csv_path   = persist_cfg.get("csv_path", "data/features.csv")
+    # sqlite_db  = persist_cfg.get("sqlite_path", "data/features.db")
+    # table_name = persist_cfg.get("sqlite_table", "features")
+    flush_s    = float(persist_cfg.get("flush_interval_s", 5))
+    max_rows   = int(persist_cfg.get("max_buffer_rows", 1000))
+    sinks = [
+        CSVFeatureSink(csv_path),
+        # SQLiteFeatureSink(sqlite_db, table=table_name, columns=FeatureEnginePD.columns())
+    ]
+    writer = FeatureWriter(sinks, flush_interval_s=flush_s, max_buffer_rows=max_rows)
+    await writer.start()
+
     engine = FeatureEnginePD()
-    processor = FeatureEngineProcessor(cfg, engine)
+    processor = FeatureEngineProcessor(cfg, engine, feature_writer=writer)
     pipe = DataPipeline(cfg, processor=processor)
     try:
         await pipe.run()
     except KeyboardInterrupt:
         await pipe.stop()
+    finally:
+        await writer.stop()
 
 
 if __name__ == "__main__":
