@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Dict, Any, List, Callable
 from collections import defaultdict
 
-from datafeed.websockets import WSClient
+from infra.ws_client import WSClient
 from datafeed.handlers import channel_registry
 from datafeed.storage import CompositeStore
 from feature.integrate import SnapshotThrottler, build_snapshot_from_row
@@ -93,7 +93,7 @@ class WriteProcessor:
                 return
             
 class FeatureEngineProcessor:
-    _tf_pat = re.compile(r"(?:candle)(\d+(?:ms|s|m|h|d))")
+    _tf_pat = re.compile(r"(?:candle)(\d+(?:m|H|D|M|Mutc|Wutc|Dutc|Hutc))")
     def __init__(self, cfg: dict, engine: Any, 
                  on_snapshot: Callable[[dict], None] = None,
                  feature_writer=None):
@@ -114,6 +114,8 @@ class FeatureEngineProcessor:
             "index-candle": ("update_candles", True),
             "books": ("update_books", False),
             "trades": ("update_trades", False),
+            "funding-rate": ("update_funding_rate", False),
+            "open-interest": ("update_open_interest", False),
         }
 
     def __call__(self, msg: Dict[str, Any]):
@@ -157,6 +159,8 @@ class FeatureEngineProcessor:
                     snapshot = build_snapshot_from_row(row)
                     self.on_snapshot(snapshot)
             if self.feature_writer is not None:
+                updates_msg = f"InstId: {instId}, tf: {tf}, total {self.engine.updates_cnt} updates in this slot."
+                logger.info(updates_msg)
                 self.feature_writer.add(feats)
             return feats if not feats.empty else None
         return None

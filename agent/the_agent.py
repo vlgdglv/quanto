@@ -9,6 +9,8 @@ from langchain.output_parsers import PydanticOutputParser
 from utils.logger import logger
 from openai import RateLimitError, APIConnectionError, APITimeoutError, APIStatusError
 import tiktoken
+from pathlib import Path
+
 
 enc = tiktoken.encoding_for_model("gpt-4o-mini")
 def count_tokens(text: str) -> int:
@@ -58,33 +60,15 @@ def count_tokens(text: str) -> int:
 # {format_instr}
 # """
 
-_SYS = """
-You are a trading advisor for crypto perpetuals.
-Return ONLY a JSON object that fits the schema.
-Guidelines:
-- Be proactive and decisive; avoid HOLD unless signals clearly conflict or data is missing.
-- When signals align, prefer BUY_LONG or SELL_SHORT with larger target_position.
-- Use snapshot features (minute close) to infer short-term trend and risk.
-- Never invent missing fields. If truly uncertain, use HOLD with target_position <=0.1.
-- Maximize profit potential and target an approximate return range of 30–50%.
-- Recommend a leverage multiplier (leverage) in [1, 20].
-  • Higher conviction & low volatility → higher leverage (8–15).
-  • Higher volatility or weak signals → conservative leverage (2–5).
-  • HOLD or CLOSE → leverage = 1.
-"""
 
-_TEMPLATE = """
-Snapshot (JSON):
-{snapshot}
+PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-Decide:
-- action ∈ [BUY_LONG, SELL_SHORT, REDUCE, CLOSE, HOLD]
-- target_position ∈ [0,1]; HOLD ≤0.1, otherwise reflect conviction (0.3–0.8 when aligned).
-- leverage ∈ [1,20]; reflects conviction vs. volatility.
-- reasons: 2–4 concise points citing snapshot fields (e.g., macd_hist, rsi, atr, spread_bp, ofi_5s).
+def load_prompt(name: str) -> str:
+    path = PROMPT_DIR / name
+    return path.read_text(encoding="utf-8")
 
-{format_instr}
-"""
+_SYS = load_prompt("sys_prompt.txt")
+_TEMPLATE = load_prompt("user_template.txt")
 
 
 class Agent:
@@ -118,12 +102,11 @@ class Agent:
             })
             logger.info("Agent Invoked.")
             return out
-        # —— 这些是“可重试”的基础设施类错误：一定要让它们冒泡 —— #
         except (RateLimitError, APIConnectionError, APITimeoutError, APIStatusError) as e:
             logger.warning(f"OpenAI transient error: {type(e).__name__}: {e}")
             raise  # 让外层的指数退避去处理
 
-        # —— 解析/结构化失败等“业务错误”：才在本地降级 —— #
+        # —— 解析/结构化失败等“业务错误”：在本地降级 —— #
         except ValidationError as e:
             logger.error(f"Pydantic parse error: {e}")
             ts = snapshot.get("ts") or int(time.time() * 1000)

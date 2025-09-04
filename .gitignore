@@ -84,3 +84,5 @@ dmypy.json
 /data/*
 
 .DS_Store
+
+prompts/*.txt

@@ -1,8 +1,8 @@
 # feature/sinks.py
 from __future__ import annotations
-import os, sqlite3, time
+import os, sqlite3, re
 from abc import ABC, abstractmethod
-from typing import Iterable, List, Sequence, Tuple
+from typing import Optional, Callable, Sequence, Tuple
 import pandas as pd
 
 class FeatureSink(ABC):
@@ -18,27 +18,69 @@ class FeatureSink(ABC):
         ...
 
 class CSVFeatureSink(FeatureSink):
-    def __init__(self, path: str, mode: str = "a"):
+    def __init__(self, path: str, 
+                 mode: str = "a", by: Optional[str] = None,
+                 key_fn: Optional[Callable[[str], str]] = None,
+                 path_template: Optional[str] = None):
         """
         :param path: 目标 CSV 路径（单文件，包含 instId/tf/ts 列，不做分表）
         :param mode: 'a' 追加 / 'w' 覆盖
+        :param by:   分文件的列名，比如 'instId' 或 'instType'；None 表示不分文件
+        :param key_fn: 对分组键做转换的函数（如从 'BTC-USDT-SWAP' 提取 'BTC'）
+        :param path_template: 自定义分文件路径模板，包含 {key} 占位符
+                              例: "data/features-{key}.csv"
         """
         self.path = path
         self.mode = mode
-        self._header_written = os.path.exists(path) and mode == "a"
+        self.by = by
+        self.key_fn = key_fn or (lambda x: x)
+        self.path_template = path_template
+        self._header_written_map: dict[str, bool] = {}
+        self._header_written_map[path] = os.path.exists(path) and mode == "a"
+
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    @staticmethod
+    def _sanitize_key(val: object) -> str:
+        s = str(val)
+        return re.sub(r'[^A-Za-z0-9_\-]', "_", s)
+    
+    def _resolve_path(self, key_val: object) -> str:
+        safe_key = self._sanitize_key(self.key_fn(key_val))
+        if self.path_template:
+            return self.path_template.format(key=safe_key)
+        d = os.path.dirname(self.path) or "."
+        base = os.path.basename(self.path)
+        stem, ext = os.path.splitext(base)
+        if not ext:
+            ext = ".csv"
+        return os.path.join(d, f"{stem}-{safe_key}{ext}")
+
+    def _write_one(self, path: str, df: pd.DataFrame) -> None:
+        cols = list(df.columns)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        header_written = self._header_written_map.get(path, os.path.exists(path) and self.mode == "a")
+        write_header = not header_written and (self.mode != "a" or not os.path.exists(path))
+        
+        df.to_csv(path, 
+                  mode=self.mode if os.path.exists(path) else "w",
+                  index=False, 
+                  header=write_header)
+        self._header_written_map[path] = True
 
     def write(self, df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        # 统一列顺序（若调用者未保证）
-        cols = list(df.columns)
-        # 如果是新文件且不是追加，则认为需要写表头
-        write_header = not self._header_written and (self.mode != "a" or not os.path.exists(self.path))
-        df.to_csv(self.path, mode=self.mode if os.path.exists(self.path) else "w",
-                  index=False, header=write_header)
-        self._header_written = True
-        # 后续都用追加
+        
+        if not self.by or self.by not in df.columns:
+            self._write_one(self.path, df)
+            self.mode = "a"
+            return
+
+        for key, group in df.groupby(self.by, dropna=False):
+            path = self._resolve_path(key)
+            self._write_one(path, group)
+
         self.mode = "a"
 
     def close(self) -> None:
