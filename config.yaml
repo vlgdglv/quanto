@@ -1,12 +1,10 @@
-env:
-  mode: live   # paper | live
-  timezone: UTC
-
 okx:
   # REST 主要用于冷启动回补（此处先留着）
   rest_base:
     live:  https://www.okx.com
     paper: https://eea.okx.com
+  
+
   # WebSocket 域名
   ws:
     live:
@@ -20,23 +18,23 @@ okx:
       private:  wss://wseeapap.okx.com:8443/ws/v5/private
 
 datafeed:
-  instIds: ["ETH-USDT-SWAP", ] #"BTC-USDT-SWAP"]
+  instIds: ["BTC-USDT-SWAP", "ETH-USDT-SWAP"] #"BTC-USDT-SWAP"]
 
   # 三类 K 线：trade / mark / index  → 映射到 candle / mark-price-candle / index-candle
   channels:
     candles:
       fetch: true
       kind: "trade"
-      bars: ["1m","5m","4H"]
+      bars: ["1m","15m","1H"]
     trades:
       fetch: true
     books:
       fetch: true
       level: 5
     funding-rate:
-      fetch: false
+      fetch: true
     open-interest:
-      fetch: false
+      fetch: true
     mark-price:
       fetch: false
     index-tickers:
@@ -93,3 +91,23 @@ auth:
   api_key: "${API_KEY}"
   secret_key: "${SECRET_KEY}"
   passphrase: "${PASSPHRASE}"
+
+trading:
+  env: PAPER                # PAPER / LIVE
+  simulated_header: true
+  instType: SWAP
+  symbols: [BTC-USDT-SWAP, ETH-USDT-SWAP]
+  leverage: 5
+  posMode: net              # net / long_short
+  tdMode: cross             # cross / isolated
+  slippage_bps: 10
+  reconcile:
+    poll_ms: 600
+    timeout_ms: 5000
+  ws:
+    reconnect_backoff_ms: [500, 1000, 2000, 5000]
+  timeouts:
+    rest_ms: 3000
+  retries:
+    rest_max_attempts: 3
+    backoff_ms: 200
