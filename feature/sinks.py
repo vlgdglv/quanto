@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os, sqlite3, re
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Sequence, Tuple
+from typing import Optional, Callable, Sequence, Union, List
 import pandas as pd
 
 class FeatureSink(ABC):
@@ -19,7 +19,8 @@ class FeatureSink(ABC):
 
 class CSVFeatureSink(FeatureSink):
     def __init__(self, path: str, 
-                 mode: str = "a", by: Optional[str] = None,
+                 mode: str = "a", 
+                 by: Optional[Union[str, List[str]]] = None,                 
                  key_fn: Optional[Callable[[str], str]] = None,
                  path_template: Optional[str] = None):
         """
@@ -45,8 +46,34 @@ class CSVFeatureSink(FeatureSink):
         s = str(val)
         return re.sub(r'[^A-Za-z0-9_\-]', "_", s)
     
+    def _format_group_key(self, key_val: object) -> str:
+        if not isinstance(self.by, (list, tuple)):
+            try:
+                transformed = self.key_fn(key_val)
+            except TypeError:
+                transformed = key_val
+            return self._sanitize_key(transformed)
+
+        cols: Sequence[str] = self.by
+        if not isinstance(key_val, tuple):
+            key_tuple = (key_val,)
+        else:
+            key_tuple = key_val
+
+        kv_dict = {c: v for c, v in zip(cols, key_tuple)}
+        try:
+            transformed = self.key_fn(kv_dict)
+            if isinstance(transformed, str) and transformed:
+                return self._sanitize_key(transformed)
+        except TypeError:
+            pass
+
+        parts = [f"{c}={self._sanitize_key(v)}" for c, v in kv_dict.items()]
+        return "_".join(parts)
+    
     def _resolve_path(self, key_val: object) -> str:
-        safe_key = self._sanitize_key(self.key_fn(key_val))
+        # safe_key = self._sanitize_key(self.key_fn(key_val))
+        safe_key = self._format_group_key(key_val)
         if self.path_template:
             return self.path_template.format(key=safe_key)
         d = os.path.dirname(self.path) or "."
@@ -57,7 +84,6 @@ class CSVFeatureSink(FeatureSink):
         return os.path.join(d, f"{stem}-{safe_key}{ext}")
 
     def _write_one(self, path: str, df: pd.DataFrame) -> None:
-        cols = list(df.columns)
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         header_written = self._header_written_map.get(path, os.path.exists(path) and self.mode == "a")
         write_header = not header_written and (self.mode != "a" or not os.path.exists(path))
@@ -71,13 +97,25 @@ class CSVFeatureSink(FeatureSink):
     def write(self, df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        
-        if not self.by or self.by not in df.columns:
+
+        if self.by is None:
             self._write_one(self.path, df)
             self.mode = "a"
             return
 
-        for key, group in df.groupby(self.by, dropna=False):
+        if isinstance(self.by, (list, tuple)):
+            missing = [c for c in self.by if c not in df.columns]
+            if missing:
+                raise KeyError(f"Columns {missing} not found in DataFrame for grouping by {self.by}.")
+            group_cols = list(self.by)
+        else:
+            if self.by not in df.columns:
+                self._write_one(self.path, df)
+                self.mode = "a"
+                return
+            group_cols = [self.by]
+
+        for key, group in df.groupby(group_cols, dropna=False):
             path = self._resolve_path(key)
             self._write_one(path, group)
 

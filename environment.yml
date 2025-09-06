@@ -1,0 +1,66 @@
+name: py312-crypto
+channels:
+  - conda-forge
+  - defaults
+channel_priority: strict
+
+dependencies:
+  # 基础
+  - python=3.12
+  - pip
+  - setuptools=80.9.0
+  - wheel
+  - ca-certificates
+
+  # aiohttp 生态（用 conda，自动解决 frozenlist/multidict/yarl 等依赖）
+  - aiohappyeyeballs=2.6.1
+  - aiohttp=3.12.15
+  - aioresponses=0.7.8
+  - aiosignal=1.4.0
+  - attrs=25.3.0
+  - idna=3.10
+  - websockets=15.0.1
+  - yarl=1.20.1
+
+  # 常用三方库（尽量走 conda 以提高兼容与性能）
+  - numpy=2.3.2
+  - pandas=2.3.1
+  - python-dateutil
+  - pytz
+  - pyyaml=6.0.2
+  - regex
+  - requests=2.32.4
+  - urllib3=2.5.0
+  - httpx=0.28.1
+  - httpcore=1.0.9
+  - tqdm=4.67.1
+  - sqlalchemy=2.0.43
+  - pytest=8.4.1
+  - pytest-asyncio=1.1.0
+  - orjson=3.11.2
+  - typing_extensions=4.15.0
+  - tenacity=9.1.2
+  - pygments=2.19.2
+  - zstandard=0.24.0
+
+  - pip:
+      # 仅保留需要用 pip 的或版本更前沿的包
+      - annotated-types==0.7.0
+      - anyio==4.10.0
+      - jiter==0.10.0
+      - jsonpatch==1.33
+      - jsonpointer==3.0.0
+      - langchain==0.3.27
+      - langchain-core==0.3.74
+      - langchain-openai==0.3.30
+      - langchain-text-splitters==0.3.9
+      - langsmith==0.4.14
+      - loguru==0.7.3
+      - openai==1.99.9
+      - propcache==0.3.2
+      - pydantic==2.11.7
+      - pydantic-core==2.33.2
+      - python-dotenv==1.1.1
+      - requests-toolbelt==1.0.0
+      - tiktoken==0.11.0
+      - typing-inspection==0.4.1
