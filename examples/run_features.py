@@ -21,7 +21,7 @@ async def main():
     flush_s    = float(persist_cfg.get("flush_interval_s", 5))
     max_rows   = int(persist_cfg.get("max_buffer_rows", 1000))
     sinks = [
-        CSVFeatureSink(csv_path, by="instId"),
+        CSVFeatureSink(csv_path, by=["instId", "tf",]),
         # SQLiteFeatureSink(sqlite_db, table=table_name, columns=FeatureEnginePD.columns())
     ]
     writer = FeatureWriter(sinks, flush_interval_s=flush_s, max_buffer_rows=max_rows)
