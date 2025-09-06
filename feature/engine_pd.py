@@ -221,6 +221,12 @@ def round_numeric_columns(df, round_specs, do_round=True):
 # -----------
 # 
 # -----------
+@dataclass
+class OHLCState:
+    open: float = None
+    high: float = None
+    low: float = None
+    close: float = None
 
 @dataclass
 class EMAState:
@@ -305,8 +311,8 @@ class KDJState:
     d: float = 50.0
     j: float = 50.0
     i: int = 0
-    qmax: _MonoMax = _MonoMax()
-    qmin: _MonoMin = _MonoMin()
+    qmax: _MonoMax = field(default_factory=_MonoMax)
+    qmin: _MonoMin = field(default_factory=_MonoMin)
 
 @dataclass
 class MicroState:
@@ -316,6 +322,11 @@ class MicroState:
 # ----------------
 #
 # ----------------
+
+def ohlc_update(state: OHLCState, ohlc: Tuple[float, float, float, float]):
+    state.open, state.high, state.low, state.close = ohlc
+    return state
+
 def ema_update(state: EMAState, x: float) -> float:
     if state.value is None:
         state.value = x
@@ -329,7 +340,7 @@ def macd_update(state: MACDState, close: float):
     state.diff = ef - es
     dea = ema_update(state.dea, state.diff)
     state.hist = 2.0 * (state.diff - dea)
-    return state.diff, state.dea, state.hist
+    return state.diff, state.dea.value, state.hist
 
 def rsi_update(state: RSIState, close: float):
     if state.last_close is None:
@@ -345,7 +356,7 @@ def rsi_update(state: RSIState, close: float):
         state.avg_gain = (state.avg_gain * (n - 1.0) + gain) / n
         state.avg_loss = (state.avg_loss * (n - 1.0) + loss) / n
     state.last_close = close
-    if state.avg_loss == 0.0:
+    if state.avg_loss is not None and state.avg_loss <= 1e-12:
         state.rsi = 100.0
     else:
         rs = state.avg_gain / state.avg_loss
@@ -597,8 +608,8 @@ class DonchianState:
     """
     n: int = 20
     i: int = 0
-    qmax: _MonoMax = _MonoMax()
-    qmin: _MonoMin = _MonoMin()
+    qmax: _MonoMax = field(default_factory=_MonoMax)
+    qmin: _MonoMin = field(default_factory=_MonoMin)
     upper: float = np.nan
     lower: float = np.nan
     width: float = np.nan
@@ -690,9 +701,8 @@ class OIState:
     oi: float = np.nan
     oiCcy: float = np.nan
     oiUsd: float = np.nan
-    last_ts: Optional[int] = np.nan
-
-    prev_oi: Optional[float] = np.nan
+    last_ts: Optional[int] = None
+    prev_oi: Optional[float] = None
     d_oi: float = np.nan
     d_oi_rate: float = np.nan
     oi_ema: EMAState = field(default_factory=lambda: EMAState(n=20, alpha=_alpha(20)))
@@ -704,6 +714,7 @@ class OIState:
 # -------------
 @dataclass
 class SeriesState:
+    ohlc: OHLCState
     macd: MACDState
     rsi: RSIState
     atr: ATRState
@@ -722,8 +733,8 @@ class SeriesState:
     funding: FundingState
     oi: OIState
 
-    last_mid: Optional[float] = np.nan
-    prev_close: Optional[float] = np.nan
+    last_mid: Optional[float] = None
+    prev_close: Optional[float] = None
     ofi_win_ms: int = 5000
     ofi_deq: Deque[Tuple[int, float]] = field(default_factory=deque)
 
@@ -784,6 +795,7 @@ class FeatureEnginePD:
         key = (instId, tr)
         if key not in self._series:
             self._series[key] = SeriesState(
+                ohlc=OHLCState(),
                 macd=macd_init(self._cfg["ema_fast"], self._cfg["ema_slow"], self._cfg["dea_n"]),
                 rsi=RSIState(self._cfg["rsi_n"]),
                 atr=ATRState(self._cfg["atr_n"]),
@@ -873,6 +885,7 @@ class FeatureEnginePD:
         for _, r in df_candles.iterrows():
             ts = int(r["ts"])
             o, h, l, c = map(float, r[["open","high","low","close"]])
+            
             confirm_val = r.get("confirm", 0)
             try:
                 is_close = int(confirm_val) == 1
@@ -882,7 +895,9 @@ class FeatureEnginePD:
                 cloesd = True
                 cloesd_ts = ts
                 continue
-            
+            print(ts, o, h, l, c)
+            ohlc_update(state.ohlc, (o, h, l, c))
+
             dif, dea, hist = macd_update(state.macd, c)
 
             rsi = rsi_update(state.rsi, c)
@@ -893,7 +908,7 @@ class FeatureEnginePD:
                                  k_smooth=self._cfg["k_smooth"], 
                                  d_smooth=self._cfg["d_smooth"])
 
-            if state.prev_close and state.prev_close > 0 and c > 0:
+            if state.prev_close is not None and state.prev_close > 0 and c > 0:
                 ret = np.log(c / state.prev_close)
             else:
                 ret = 0.0
@@ -1054,6 +1069,7 @@ class FeatureEnginePD:
         out_rows = []
         out_rows.append({
                 "instId": instId, "tf": tf, "ts": ts_to_str(ts),
+                "o": state.ohlc.open, "h": state.ohlc.high, "l": state.ohlc.low, "c": state.ohlc.close,
                 "ema_fast": state.macd.ema_fast.value or state.prev_close, "ema_slow": state.macd.ema_slow.value or state.prev_close,
                 "macd_dif": state.macd.diff or 0.0, "macd_dea": state.macd.dea.value or 0.0, 
                 "macd_hist": state.macd.hist or 0.0, "rsi": state.rsi.rsi or 50.0,
@@ -1136,6 +1152,7 @@ class FeatureEnginePD:
     def columns(self):
         basic_colums = [
             "instId","tf","ts",
+            "o","h","l","c",
             "ema_fast","ema_slow","macd_dif","macd_dea","macd_hist",
             "rsi","kdj_k","kdj_d","kdj_j",
             "atr","rv_ewma","spread_bp","ofi_5s",
