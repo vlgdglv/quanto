@@ -9,7 +9,7 @@ from typing import Dict, Any
 from agent.the_agent import Agent
 from agent.schema import ActionProposal
 from feature.engine_pd import FeatureEnginePD
-from datafeed.pipeline import FeatureEngineProcessor
+from feature.processor import FeatureEngineProcessor
 from datafeed.pipeline import DataPipeline
 from utils.logger import logger
 

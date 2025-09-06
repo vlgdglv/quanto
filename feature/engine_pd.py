@@ -7,7 +7,10 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import math, time
+import re
+from fnmatch import fnmatch
 
+from feature.summarizer import FeatureSummarizer
 from utils.logger import logger
 
 def ts_to_str(ts):
@@ -134,7 +137,86 @@ round_map = {
     "d_oi": 2,           # 变化量
     "d_oi_rate": 6,      # 相对变化率，通常很小
     "oi_ema": 2,         # OI 的 EMA
+
+     # —— 新增的非 H 维度列 ——
+    "s_macd_pos_streak": 0,          # 连续为正的 DIF-DEA 段数（或 bar 数），取整
+    "s_macd_neg_streak": 0,          # 同上
+    "s_squeeze_on_dur": 0,           # squeeze 持续时长，若单位为 bar 也应取整
+    "s_donchian_dist_upper": 6,      # 与上轨的价格距离
+    "s_donchian_dist_lower": 6,      # 与下轨的价格距离
+    "s_donchian_mid_dev": 6,         # 相对中线的偏差，价格单位
+    "s_ofi_sum_30m": 3,              # OFI 汇总，通常取 3 位足够
+
+    # —— 带 H{H}m 后缀的通配列（glob） ——
+    "s_mom_slope_H*m": 6,            # 动量斜率：通常是价格差/单位时间
+    "s_rsi_mean_H*m": 2,             # RSI 均值（0~100）
+    "s_rsi_std_H*m": 2,              # RSI 标准差，典型量级较小也可 2
+    "s_spread_bp_mean_H*m": 2,       # 基点均值
+    "s_cvd_delta_H*m": 3,            # CVD 的变化量
+    "s_kyle_ema_H*m": 6,             # Kyle λ 量级很小
+    "s_vpin_mean_H*m": 3,            # [0,1] 周期均值
+    "s_oi_rate_H*m": 6,              # OI 变化率，通常很小
 }
+
+
+def round_numeric_columns(df, round_specs, do_round=True):
+    """
+    round_specs 可为:
+      - dict[str, int]: 兼容你现在的写法（键为精确名或包含通配符的 glob）
+      - 或 List[Tuple[str, int]]: 想要固定优先级时可用 list 保序
+        建议顺序：精确 > 通配 > 正则
+      - 约定：若 key 形如 r"^regex$" 或以 "re:" 开头，则视作正则
+    """
+    if not do_round or df is None or df.empty:
+        return df
+
+    # 统一为有序列表（保持用户传入顺序）
+    if isinstance(round_specs, dict):
+        items = list(round_specs.items())
+    else:
+        items = list(round_specs)
+
+    # 记录已经被处理过的列，防止被重复覆盖
+    processed = set()
+
+    def is_regex_key(k: str) -> bool:
+        return k.startswith("re:") or (k.startswith("^") and k.endswith("$"))
+
+    # 三轮：精确 -> glob -> regex
+    # 1) 精确匹配
+    for key, nd in items:
+        if is_regex_key(key) or any(ch in key for ch in "*?"):
+            continue
+        if key in df.columns and key not in processed:
+            df[key] = pd.to_numeric(df[key], errors="coerce").round(nd)
+            processed.add(key)
+
+    # 2) glob 匹配
+    for key, nd in items:
+        if is_regex_key(key) or not any(ch in key for ch in "*?"):
+            continue
+        for col in df.columns:
+            if col in processed:
+                continue
+            if fnmatch(col, key):
+                df[col] = pd.to_numeric(df[col], errors="coerce").round(nd)
+                processed.add(col)
+
+    # 3) 正则匹配
+    for key, nd in items:
+        if not is_regex_key(key):
+            continue
+        pat = key[3:] if key.startswith("re:") else key
+        rx = re.compile(pat)
+        for col in df.columns:
+            if col in processed:
+                continue
+            if rx.fullmatch(col):
+                df[col] = pd.to_numeric(df[col], errors="coerce").round(nd)
+                processed.add(col)
+
+    return df
+
 
 # -----------
 # 
@@ -621,7 +703,7 @@ class OIState:
 #
 # -------------
 @dataclass
-class _SeriesState:
+class SeriesState:
     macd: MACDState
     rsi: RSIState
     atr: ATRState
@@ -645,6 +727,16 @@ class _SeriesState:
     ofi_win_ms: int = 5000
     ofi_deq: Deque[Tuple[int, float]] = field(default_factory=deque)
 
+    
+@dataclass
+class DerivedState:
+    """用于缓存‘当前bar的二次/时序摘要’。不存滑窗，滑窗在 FeatureSummarizer 内部维护。"""
+    last_ts: Optional[int] = None
+    last_tf: Optional[str] = None
+    summary: Dict[str, float] = field(default_factory=dict)
+    version: str = "v1"         # 可用 summarizer 配置 hash
+    dirty: bool = False   
+
    
 class FeatureEnginePD:
     """
@@ -658,7 +750,8 @@ class FeatureEnginePD:
                  kdj_n=9, k_smooth=3, d_smooth=3, ewma_lambda=0.94,
                  kyle_alpha=0.1, vpin_bucket_vol=10_000.0, vpin_window=50,
                  squeeze_bb_k=2.0, squeeze_kc_k=1.5, squeeze_lambda=0.94,
-                 donchian_n=20, er_n=10
+                 donchian_n=20, er_n=10,
+                 enable_summary=False, summary_cfg=None
                  ):
         self._cfg = dict(ema_fast=ema_fast, ema_slow=ema_slow, dea_n=dea_n,
                          rsi_n=rsi_n, atr_n=atr_n, kdj_n=kdj_n,
@@ -668,19 +761,29 @@ class FeatureEnginePD:
                          squeeze_kc_k=squeeze_kc_k, squeeze_lambda=squeeze_lambda,
                          donchian_n=donchian_n, er_n=er_n
                          )
-        self._series: Dict[Tuple[str,str], _SeriesState] = {}  # key: (instId, tf)
+        self._series: Dict[Tuple[str,str], SeriesState] = {}  # key: (instId, tf)
         self._shared_tf = "__tick__"
         self.updates = 0
         self.updates_cnt = 0
 
-    def _get_shared_state(self, instId: str) -> _SeriesState:
+        self.enable_summary = enable_summary
+        scfg = summary_cfg or {"horizons_min": (60,180,420), "slope_alpha": 0.3, "ew_alpha": 0.2}
+        self.summarizer = FeatureSummarizer(
+            horizons_min=tuple(scfg.get("horizons_min",(60,180,420))),
+            slope_alpha=float(scfg.get("slope_alpha",0.3)),
+            ew_alpha=float(scfg.get("ew_alpha",0.2)),
+        )
+        self._derived: Dict[Tuple[str, str], DerivedState] = {}
+    
+
+    def _get_shared_state(self, instId: str) -> SeriesState:
         """共享 tick 桶：books/trades/OI/funding 都写这里"""
         return self._get_state(instId, self._shared_tf)
 
-    def _get_state(self, instId: str, tr: str) -> _SeriesState:
+    def _get_state(self, instId: str, tr: str) -> SeriesState:
         key = (instId, tr)
         if key not in self._series:
-            self._series[key] = _SeriesState(
+            self._series[key] = SeriesState(
                 macd=macd_init(self._cfg["ema_fast"], self._cfg["ema_slow"], self._cfg["dea_n"]),
                 rsi=RSIState(self._cfg["rsi_n"]),
                 atr=ATRState(self._cfg["atr_n"]),
@@ -702,6 +805,12 @@ class FeatureEnginePD:
                 oi=OIState(),
             )
         return self._series[key]
+    
+    def _get_derived(self, instId: str, tf: str) -> DerivedState:
+        key = (instId, tf)
+        if key not in self._derived:
+            self._derived[key] = DerivedState(version="v1")
+        return self._derived[key]
     
     # ----------- books -> spread_bp -----------
     def update_books(self, df_books: pd.DataFrame, instId: str, tf: str):
@@ -798,7 +907,35 @@ class FeatureEnginePD:
             self.updates += 1
             self.updates_cnt = self.updates
             self.updates = 0
-            df = self.snapshot_feature(instId, tf, cloesd_ts)
+
+            sum_dict = {}
+            if self.enable_summary:
+                shared = self._get_shared_state(instId)
+                sum_dict = self.summarizer.update_on_bar(
+                    instId=instId, tf=tf,
+                    close=c,
+                    ema_fast=(state.macd.ema_fast.value if state.macd and state.macd.ema_fast else np.nan),
+                    ema_slow=(state.macd.ema_slow.value if state.macd and state.macd.ema_slow else np.nan),
+                    macd_hist=(state.macd.hist if state.macd else np.nan),
+                    rsi=(state.rsi.rsi if state.rsi else np.nan),
+                    squeeze_on=(state.squeeze.squeeze_on if state.squeeze else False),
+                    spread_bp=(shared.micro.spread_bp if shared and shared.micro else np.nan),
+                    ofi_5s=(shared.micro.ofi_5s if shared and shared.micro else np.nan),
+                    cvd=(shared.cvd.cvd if shared and shared.cvd else np.nan),
+                    kyle_lambda=(shared.kyle.value if shared and shared.kyle else np.nan),
+                    vpin=(shared.vpin.vpin if shared and shared.vpin else np.nan),
+                    donchian_upper=(state.donchian.upper if state.donchian else np.nan),
+                    donchian_lower=(state.donchian.lower if state.donchian else np.nan),
+                    atr=(state.atr.atr if state.atr else np.nan),
+                    d_oi_rate=(shared.oi.d_oi_rate if shared and shared.oi else np.nan),
+                )
+                dstate = self._get_derived(instId, tf)
+                dstate.last_ts = ts     # 注意：ts 是“收盘时间”
+                dstate.last_tf = tf
+                dstate.summary = sum_dict or {}
+                dstate.dirty = True
+
+            df = self.snapshot_feature(instId, tf, ts)
             return df
         else:
             return None
@@ -948,6 +1085,13 @@ class FeatureEnginePD:
                 "oi_ema": src_oi.oi_ema.value,
             })
         
+        # 合并摘要（仅当 ts 匹配；否则忽略，避免跨 bar 污染）
+        if self.enable_summary:
+            dstate = self._get_derived(instId, tf)
+            if dstate.last_ts == ts and dstate.summary:
+                out_rows[0].update(dstate.summary)
+                dstate.dirty = False   # 被消费过了
+
         if not out_rows:
             return pd.DataFrame(columns=self.columns())
         
@@ -957,14 +1101,40 @@ class FeatureEnginePD:
                 .reset_index(drop=True))
 
         if do_round:
-            for col, nd in round_map.items():
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce").round(nd)
+            df = round_numeric_columns(df, round_map, do_round=True)
         return df
 
-    @staticmethod
-    def columns():
-        return [
+    def _write_last_summary(self, state, ts: int, summary: dict):
+        """把本根bar的 summary 写到 state 上，顺便做基本清洗"""
+        if summary is None:
+            summary = {}
+        clean = {}
+        for k, v in summary.items():
+            if v is None:
+                clean[k] = np.nan
+            elif isinstance(v, bool):
+                clean[k] = float(v)
+            else:
+                try:
+                    fv = float(v)
+                    clean[k] = fv
+                except Exception:
+                    continue
+        state._last_summary = clean
+        state._last_summary_ts = int(ts) if ts is not None else None
+
+
+    def _read_last_summary_for_ts(self, state, ts: int) -> dict:
+        """
+        只有当缓存的 summary 与当前 ts 一致才返回；否则返回空 dict。
+        这样避免把上一根 bar 的摘要误并到本根。
+        """
+        if getattr(state, "_last_summary_ts", None) == int(ts):
+            return getattr(state, "_last_summary", {}) or {}
+        return {}
+
+    def columns(self):
+        basic_colums = [
             "instId","tf","ts",
             "ema_fast","ema_slow","macd_dif","macd_dea","macd_hist",
             "rsi","kdj_k","kdj_d","kdj_j",
@@ -980,483 +1150,6 @@ class FeatureEnginePD:
             "funding_time","next_funding_time","funding_time_to_next_min",
             "oi","oiCcy","oiUsd","d_oi","d_oi_rate","oi_ema",
         ] 
-    
-
-# -----------------------
-# Snapshot in memory
-# -----------------------
-class SnapshotStore:
-    def __init__(self, keep_n=100):
-        self.keep_n = keep_n
-        self._base:     Dict[Tuple[str,str], List[Dict[str, Any]]] = defaultdict(list)
-        self._derived:  Dict[Tuple[str,str], List[Dict[str, Any]]] = defaultdict(list)
-
-    def append_base(self, row: Dict[str, Any]):
-        key = (row["instId"], row["tf"])
-        self._base[key].append(dict(row))
-        self._gc(key, kind="base")
-
-    def upsert_derived(self, row: Dict[str, Any]):
-        key = (row["instId"], row["tf"])
-        ts_ms = _to_ts_ms(row.get("ts"))
-        row = dict(row)
-        row["ts_ms"] = ts_ms
-        L = self._derived[key]
-        for i in range(len(L)-1, -1, -1):
-            if _to_ts_ms(L[i].get("ts_ms", L[i].get("ts"))) == ts_ms:
-                L[i] = row
-                break
-        else:
-            L.append(row)
-        self._gc(key, kind="derived")
-    
-    def fetch(self, instId: str, tf: str, start_ms: int, end_ms: int, kind: str)-> pd.DataFrame:
-        key = (instId, tf)
-        arr = self._base[key] if kind == "base" else self._derived[key]
-        rows = []
-        for r in arr:
-            tms = _to_ts_ms(r.get("ts_ms", r.get("ts")))
-            if tms is None: continue
-            if start_ms <= tms <= end_ms:
-                rows.append(r)
-        if not rows:
-            return pd.DataFrame()
-        df = pd.DataFrame(rows)
-        if "tm_ms" not in df.columns:
-            df["tm_ms"] = df["ts"].map(_to_ts_ms)
-        return df.sort_values("tm_ms").reset_index(drop=True)
-    
-    def _gc(self, key: Tuple[str,str], kind: str):
-        horizon_ms = self.keep_n * 24 * 3600 * 1000
-        now_ms = int(time.time() * 1000)
-        arr = self._base[key] if kind == "base" else self._derived[key]
-        out = []
-        for r in arr:
-            tms = _to_ts_ms(r.get("ts_ms", r.get("ts")))
-            if tms is None or (now_ms - tms) <= horizon_ms:
-                out.append(r)
-        if kind == "base":
-            self._base[key] = out
-        else:
-            self._derived[key] = out
-
-class RollingDeque:
-    def __init__(self, max_len: Optional[int]=None, horizon_ms: Optional[int]=None):
-        self.max_len = max_len
-        self.horizon_ms = horizon_ms
-        self.deque = deque(maxlen=self.max_len)
-    
-    def append(self, ts_ms: int, val: float):
-        self.deque.append((ts_ms, val))
-        self._trim(ts_ms)
-
-    def _trim(self, current_ts_ms: int):
-        if self.horizon_ms is not None:
-            lo = current_ts_ms - self.horizon_ms
-            while self.deque and (self.deque[0][0] is not None) and self.deque[0][0] < lo:
-                self.deque.popleft()
-        if self.max_len is not None:
-            while len(self.deque) > self.max_len:
-                self.deque.popleft()
-    
-    def last_n(self, n: int) -> List[Tuple[int, float]]:
-        return list(self.deque)[-n:]
-    
-    def all(self) -> List[Tuple[int, float]]:
-        return list(self.deque)
-    
-
-class WindowManager:
-    """
-    管理 (instId, tf, col) -> RollingDeque
-    """
-    def __init__(self):
-        self._map: Dict[Tuple[str,str,str], RollingDeque] = {}
-
-    def ingest(self, row: Dict[str, Any], columns: List[str], 
-                maxlen: Optional[int]=None, horizon_ms: Optional[int]=None):
-        instId, tf = row["instId"], row["tf"]
-        ts_ms = _to_ts_ms(row.get("ts_ms"), row.get("ts"))
-        if ts_ms is None:
-            return
-        for col in columns:
-            val = _safe_float(row.get(col), np.nan)
-            if math.isnan(val):
-                continue
-            key = (instId, tf, col)
-            rq = self._map.get(key)
-            if rq is None:
-                rq = RollingDeque(maxlen=maxlen, horizon_ms=horizon_ms)
-                self._map[key] = rq
-            rq.append(ts_ms, val)
-
-    def get_last_n(self, instId: str, tf: str, col: str, n: int) -> List[Tuple[int, float]]:
-        key = (instId, tf, col)
-        return self._map.get(key, RollingDeque()).last_n(n)
-    
-    def get_time_windows(self, instId: str, tf: str, col: str, end_ts_ms: int, horizon_ms: int) -> List[Tuple[int, float]]:
-        rq = self._map.get((instId, tf, col))
-        if rq is None:
-            return
-        arr = rq.all()
-        lo = end_ts_ms - horizon_ms
-        return [(t, v) for (t, v) in arr if (t is not None) and (lo <= t <= end_ts_ms)]
-    
-class PctileManager:
-    """
-    严格滑窗模式：保存窗口内全部样本，计算 percentile_rank 时 O(n log n) 排序（n 为窗口样本数）
-    采样近似模式：保存最多 max_samples 个样本（时间窗内），超限后按 FIFO 丢弃，近似分布。
-    """
-    def __init__(self, mode: str="exact", horizon_days: int=30, max_samples: int=5000):
-        assert mode in ("exact", "sample")
-        self.mode = mode
-        self.horizon_days = horizon_days
-        self.horizon_ms = horizon_days * 24 * 3600 * 1000
-        self.max_samples = max_samples
-        self._map: Dict[Tuple[str,str], deque] = defaultdict(deque)
-
-    def ingest(self, instId: str, feature: str, ts_ms: int, value: float):
-        if ts_ms is None or math.isnan(value):
-            return
-        key = (instId, feature)
-        dq = self._map[key]
-        dq.append((ts_ms, float(value)))
-        lo = ts_ms - self.horizon_ms
-        while dq and dq[0][0] < lo:
-            dq.popleft()
-        if self.mode == "sample":
-            while len(dq) > self.max_samples:
-                dq.popleft()
-
-    def percentile_rank(self, instId: str, feature: str, ts_ms: int, value: float) -> float:
-        key = (instId, feature)
-        dq = self._map.get(key)
-        if dq is None or len(dq) == 0:
-            return np.nan
-        lo = ts_ms - self.horizon_ms
-        vals = [v for (t, v) in dq if t >= lo and not math.isnan(v)]
-        if not vals:
-            return np.nan
-        vals_sorted = np.sort(np.array(vals, dtype=float))
-        rank = np.searchsorted(vals_sorted, value, side="right")
-        return rank / float(len(vals_sorted))
-
-class Resampler:
-    """
-    简易重采样器：从 SnapshotStore(base) 取最近窗口数据，按目标频率聚合。
-    以“末值(last)”作为状态类指标的聚合方式（例如 macd_hist）。
-    """
-    def __init__(self, store: SnapshotStore, base_tf: str="1m"):
-        self.store = store
-        self.base_tf = base_tf  
-
-    def last_values(self, instId: str, 
-                    tf_from: str, column: str, 
-                    end_ts_ms: int, target_freq: str, bins: int) -> List[Tuple[int, float]]:
-        """
-        返回最近 bins 个目标频率桶的 (bucket_ts_ms, last_value) 列表（按时间升序）。
-        """
-        # 需要的时间范围：bins * freq + 余量 1 桶
-        if target_freq.endswith('m'):
-            width_min = int(target_freq[:-1])
-            width_ms = width_min * 60_000
-        elif target_freq.endswith('h'):
-            width_hr = int(target_freq[:-1])
-            width_ms = width_hr * 3600_000
-        else:
-            width_ms = 15 * 60_000  # 默认 15m
-
-        need_ms = bins * width_ms + width_ms  # 多取一桶冗余
-        start_ms = end_ts_ms - need_ms
-
-        df = self.store.fetch(instId, tf_from, start_ms=start_ms, end_ms=end_ts_ms, kind="base")
-        if df.empty or column not in df.columns:
-            return []
-
-        # 确保 ts_ms
-        if "ts_ms" not in df.columns:
-            df["ts_ms"] = df["ts"].map(_to_ts_ms)
-
-        # 计算分桶 key（向下取整到目标 freq）
-        df["_bucket"] = df["ts_ms"].map(lambda t: _floor_to_freq(int(t), target_freq))
-        # 每桶取最后一个非空值
-        grp = df.groupby("_bucket", as_index=False)[[column, "ts_ms"]].last().dropna(subset=[column])
-        grp = grp.sort_values("_bucket")
-        # 取最近 bins 桶
-        if len(grp) > bins:
-            grp = grp.iloc[-bins:]
-        out = list(zip(grp["_bucket"].astype(int).tolist(), grp[column].astype(float).tolist()))
-        return out
-    
-class RollingOLS:
-    """
-    维护最多 N 点的 (t, y) 序列，O(1) 更新 OLS 斜率。
-    t 可以用分钟数（ts_ms / 60000）。
-    """
-    def __init__(self, maxlen: int):
-        self.maxlen = maxlen
-        self.deq: deque = deque()
-        self.sum_t = 0.0
-        self.sum_y = 0.0
-        self.sum_tt = 0.0
-        self.sum_ty = 0.0
-
-    def append(self, t: float, y: float):
-        self.deq.append((t, y))
-        self.sum_t += t
-        self.sum_y += y
-        self.sum_tt += t*t
-        self.sum_ty += t*y
-        while len(self.deq) > self.maxlen:
-            t0, y0 = self.deq.popleft()
-            self.sum_t -= t0
-            self.sum_y -= y0
-            self.sum_tt -= t0*t0
-            self.sum_ty -= t0*y0
-
-    def slope(self) -> float:
-        n = len(self.deq)
-        if n < 2:
-            return np.nan
-        denom = n * self.sum_tt - self.sum_t * self.sum_t
-        if abs(denom) < 1e-12:
-            return np.nan
-        return (n * self.sum_ty - self.sum_t * self.sum_y) / denom
-
-# ------------------------------
-# Derived feature 插件注册表
-# ------------------------------
-DerivedFn = Callable[["Context"], Dict[str, Any]]
-
-class DerivedRegistry:
-    def __init__(self):
-        self._plugins: Dict[str, DerivedFn] = {}
-
-    def register(self, name: str):
-        def deco(fn: DerivedFn):
-            self._plugins[name] = fn
-            return fn
-        return deco
-
-    def names(self) -> List[str]:
-        return list(self._plugins.keys())
-    
-    def compute_all(self, ctx: "Context") -> Dict[str, Any]:
-        out = {}
-        for name, fn in self._plugins.items():
-            try:
-                part = fn(ctx) or {}
-            except Exception as e:
-                part = {f"{name}_error": str(e)}
-            out.update(part)
-        return out
-
-
-# ------------------------------
-# Context：插件的只读视图
-# ------------------------------
-@dataclass
-class Context:
-    instId: str
-    tf: str
-    ts_ms: int
-    base_row: Dict[str, Any]
-    store: SnapshotStore
-    windows: WindowManager
-    pctiles: PctileManager
-    resampler: Resampler
-    config: Dict[str, Any]
-
-    def get_last_n(self, col: str, n: int) -> List[Tuple[int, float]]:
-        return self.windows.get_last_n(self.instId, self.tf, col, n)
-
-    def get_time_window(self, col: str, horizon_ms: int) -> List[Tuple[int, float]]:
-        return self.windows.get_time_window(self.instId, self.tf, col, self.ts_ms, horizon_ms)
-
-    def resample_last_values(self, col: str, target_freq: str, bins: int) -> List[Tuple[int, float]]:
-        return self.resampler.last_values(self.instId, self.tf, col, self.ts_ms, target_freq, bins)
-
-    def percentile_rank(self, feature: str, value: float) -> float:
-        return self.pctiles.percentile_rank(self.instId, feature, self.ts_ms, value)
-
-# ------------------------------
-# HistoryFeaturizer：主入口
-# ------------------------------
-class HistoryFeaturizer:
-    def __init__(self, 
-                 store: SnapshotStore,
-                 registry: DerivedRegistry,
-                 window_mgr: WindowManager,
-                 pctile_mgr: PctileManager,
-                 resampler: Resampler,
-                 schema_version: str = "derived.v1.0"):
-        self.store = store
-        self.registry = registry
-        self.windows = window_mgr
-        self.pctiles = pctile_mgr
-        self.resampler = resampler
-        self.schema_version = schema_version
-
-        # 为窗口管理声明需要长期维护的列（可按需扩展）
-        self._win_cols = [
-            "microprice","atr","donchian_lower","donchian_width",
-            "macd_hist","cvd","kyle_lambda","vpin"
-        ]
-        # 分位数管理的列（映射名可与列名一致）
-        self._pctile_cols = ["kyle_lambda","vpin"]
-
-    def on_new_base_row(self, base_row: pd.Series | Dict[str, Any])-> Dict[str, Any]:
-        """
-        在 bar close 时调用。输入：来自 FeatureEnginePD.snapshot_feature 的单行。
-        输出：合并后的 {base + derived + 元数据} 字典。
-        """
-        if isinstance(base_row, pd.Series):
-            base_row = base_row.to_dict()
-        instId = base_row["instId"]
-        tf = base_row["tf"]
-        ts_ms = _to_ts_ms(base_row.get("ts_ms", base_row.get("ts")))
-        if ts_ms is None:
-            # 尝试落盘也行，但这里直接返回原样
-            out = dict(base_row)
-            out["_schema"] = self.schema_version
-            out["_warn"] = "ts_ms_missing"
-            return out
-        
-        # 1) 写入基础快照
-        row_to_store = dict(base_row)
-        row_to_store["ts_ms"] = ts_ms
-        self.store.append_base(row_to_store)
-
-         # 2) 更新窗口列
-        self.windows.ingest(row_to_store, columns=self._win_cols, maxlen=1024, horizon_ms=40*24*3600*1000)
-
-        # 3) 更新分位数列
-        for col in self._pctile_cols:
-            val = _safe_float(base_row.get(col), np.nan)
-            if not math.isnan(val):
-                self.pctiles.ingest(instId, col, ts_ms, val)
-
-        # 4) 计算派生
-        ctx = Context(
-            instId=instId, tf=tf, ts_ms=ts_ms, base_row=base_row,
-            store=self.store, windows=self.windows, pctiles=self.pctiles,
-            resampler=self.resampler, config={"schema": self.schema_version}
-        )
-        derived = self.registry.compute_all(ctx)
-
-        # 5) 合并并落盘派生
-        out = dict(base_row)
-        out.update(derived)
-        out["ts_ms"] = ts_ms
-        out["_schema"] = self.schema_version
-        out["_gen_ts_ms"] = int(pd.Timestamp.utcnow().value // 1_000_000)
-
-        self.store.upsert_derived(out)
-        return out
-    
-
-
-
-# ============================================================
-#  内置派生特征插件（你可继续添加）
-# ============================================================
-registry = DerivedRegistry()
-
-@registry.register("donchian_pos")
-def _donchian_pos(ctx: Context) -> Dict[str, Any]:
-    micro = _safe_float(ctx.base_row.get("microprice"))
-    lo = _safe_float(ctx.base_row.get("donchian_lower"))
-    width = _safe_float(ctx.base_row.get("donchian_width"))
-    eps = 1e-9
-    if any(math.isnan(x) for x in [micro, lo, width]):
-        return {"donchian_pos": np.nan}
-    if width <= 0:
-        return {"donchian_pos": np.nan}
-    pos = (micro - lo) / max(width, eps)
-    return {"donchian_pos": _clip01(pos)}
-
-@registry.register("atr_pct")
-def _atr_pct(ctx: Context) -> Dict[str, Any]:
-    atr = _safe_float(ctx.base_row.get("atr"))
-    micro = _safe_float(ctx.base_row.get("microprice"))
-    eps = 1e-9
-    if math.isnan(atr) or math.isnan(micro) or micro <= 0:
-        return {"atr_pct": np.nan}
-    return {"atr_pct": atr / max(micro, eps)}
-
-@registry.register("kyle_lambda_pctile")
-def _kyle_pctile(ctx: Context) -> Dict[str, Any]:
-    val = _safe_float(ctx.base_row.get("kyle_lambda"))
-    if math.isnan(val):
-        return {"kyle_lambda_pctile": np.nan, "kyle_lambda_pctile_src": "empty"}
-    p = ctx.percentile_rank("kyle_lambda", val)
-    return {"kyle_lambda_pctile": _clip01(p), "kyle_lambda_pctile_src": "window_30d"}
-
-@registry.register("vpin_pctile")
-def _vpin_pctile(ctx: Context) -> Dict[str, Any]:
-    val = _safe_float(ctx.base_row.get("vpin"))
-    if math.isnan(val):
-        return {"vpin_pctile": np.nan, "vpin_pctile_src": "empty"}
-    p = ctx.percentile_rank("vpin", val)
-    return {"vpin_pctile": _clip01(p), "vpin_pctile_src": "window_30d"}
-
-@registry.register("macd_hist_slope_15m")
-def _macd_hist_slope_15m(ctx: Context) -> Dict[str, Any]:
-    """
-    从高频基础快照重采样为 15m 桶，对最近 3 桶求 OLS 斜率（单位：每 15m 的变化量）。
-    若不足 3 桶，返回 NaN。
-    """
-    bins = 3
-    pairs = ctx.resample_last_values("macd_hist", target_freq="15m", bins=bins)
-    if len(pairs) < bins:
-        return {"macd_hist_slope_15m": np.nan, "macd_hist_slope_15m_src": "insufficient"}
-    # OLS
-    ols = RollingOLS(maxlen=bins)
-    for t_ms, y in pairs:
-        ols.append(_minutes(t_ms), _safe_float(y))
-    slope = ols.slope()
-    # 也可输出简单差分：
-    last_first = _safe_float(pairs[-1][1]) - _safe_float(pairs[0][1])
-    return {
-        "macd_hist_slope_15m": slope,
-        "macd_hist_slope_15m_df": last_first,
-        "macd_hist_slope_15m_src": "resample_15m_last"
-    }
-
-@registry.register("cvd_slope_30m")
-def _cvd_slope_30m(ctx: Context) -> Dict[str, Any]:
-    """
-    使用当前 tf 的基础序列，在 30 分钟时间窗内对 (t,y) 做 OLS 斜率。
-    若样本太少，返回 NaN。
-    """
-    horizon_ms = 30 * 60_000
-    pairs = ctx.get_time_window("cvd", horizon_ms=horizon_ms)
-    if len(pairs) < 2:
-        return {"cvd_slope_30m": np.nan, "cvd_slope_30m_df": np.nan, "cvd_slope_30m_src": "insufficient"}
-    ols = RollingOLS(maxlen=len(pairs))
-    for t_ms, y in pairs:
-        ols.append(_minutes(t_ms), _safe_float(y))
-    slope = ols.slope()  # 单位：每分钟增长量
-    # 末前差
-    last_first = _safe_float(pairs[-1][1]) - _safe_float(pairs[0][1])
-    return {
-        "cvd_slope_30m": slope,
-        "cvd_slope_30m_df": last_first,
-        "cvd_slope_30m_src": "time_window_30m"
-    }
-
-def build_history_layer(base_tf_for_resample: str = "1m",
-                        pctile_mode: str = "exact") -> HistoryFeaturizer:
-    """
-    工厂方法：创建一套可用的历史派生层实例。
-    pctile_mode: "exact"（严格滑窗）或 "sample"（近似采样）。
-    """
-    store = SnapshotStore(keep_days=40)
-    window_mgr = WindowManager()
-    pctile_mgr = PctileManager(mode=pctile_mode, horizon_days=30, max_samples=8000)
-    resampler = Resampler(store=store, base_tf=base_tf_for_resample)
-    featurizer = HistoryFeaturizer(
-        store=store, registry=registry, window_mgr=window_mgr,
-        pctile_mgr=pctile_mgr, resampler=resampler, schema_version="derived.v1.0"
-    )
-    return featurizer
+        if self.enable_summary:
+            basic_colums.extend(self.summarizer.summary_columns())
+        return basic_colums

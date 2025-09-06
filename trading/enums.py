@@ -9,9 +9,10 @@ class Side(Enum):
     BUY = "buy"
     SELL = "sell"
 
-class PosMode(Enum):
+class PosSide(Enum):
     NET = "net"
-    LONG_SHORT = "long_short"
+    LONG = "long"
+    SHORT = "short"
 
 class TdMode(Enum):
     CROSS = "cross"

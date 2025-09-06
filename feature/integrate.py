@@ -46,6 +46,51 @@ def build_snapshot_from_row(row: dict) -> Dict[str, Any]:
     if "obi_5" in row:
         snap["micro"]["obi_5"] = float(row.get("obi_5") or 0.0)
     return snap
+# {
+#   "snapshot": {
+#     "last_price": 112238,
+#     "atr": 105.4,
+#     "rv_ewma": 0.0,
+#     "spread_bp": 0.01,
+#     "funding_rate": 0.0001,
+#     "funding_premium_z": -0.000217,
+#     "funding_time_to_next_min": 858.0,
+#     "oi": 2734128.43,
+#     "d_oi_rate": 1.3e-05
+#   },
+#   "trend_momentum": {
+#     "ema_fast": 112238,
+#     "ema_slow": 112238,
+#     "macd_dif": 0.0,
+#     "macd_hist": 0.0,
+#     "rsi": 50.0,
+#     "s_mom_slope_H60m": 0.0,
+#     "s_mom_slope_H180m": 0.0,
+#     "s_mom_slope_H420m": 0.0,
+#     "s_rsi_mean_H60m": 50.0,
+#     "s_rsi_std_H60m": 0.0089,
+#     "...": "..."
+#   },
+#   "microstructure": {
+#     "ofi_5s": -70.37,
+#     "s_ofi_sum_30m": -70.37,
+#     "cvd": 801.79,
+#     "s_cvd_delta_H60m": 0.0,
+#     "s_spread_bp_mean_H60m": 0.0089
+#   },
+#   "volatility_regime": {
+#     "s_squeeze_on_dur": 1.0,
+#     "donchian_width_norm": 0.367,
+#     "s_donchian_dist_upper": 1023.2,
+#     "s_donchian_dist_lower": 511.4
+#   },
+#   "positioning": {
+#     "s_oi_rate_H60m": 0.0,
+#     "s_oi_rate_H180m": 0.0,
+#     "s_oi_rate_H420m": 0.0
+#   }
+# }
+
 
 @dataclass
 class _KeyState:

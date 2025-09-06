@@ -1,7 +1,8 @@
 # examples/run_features.py
 import asyncio, yaml
 from pathlib import Path
-from datafeed.pipeline import DataPipeline, FeatureEngineProcessor
+from datafeed.pipeline import DataPipeline
+from feature.processor import FeatureEngineProcessor
 from feature.engine_pd import FeatureEnginePD
 from feature.writer import FeatureWriter
 from feature.sinks import CSVFeatureSink
@@ -26,7 +27,7 @@ async def main():
     writer = FeatureWriter(sinks, flush_interval_s=flush_s, max_buffer_rows=max_rows)
     await writer.start()
 
-    engine = FeatureEnginePD()
+    engine = FeatureEnginePD(enable_summary=True)
     processor = FeatureEngineProcessor(cfg, engine, feature_writer=writer)
     pipe = DataPipeline(cfg, processor=processor)
     try:

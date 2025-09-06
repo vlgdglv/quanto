@@ -19,7 +19,7 @@ okx:
 
 datafeed:
   instIds: ["BTC-USDT-SWAP", "ETH-USDT-SWAP"] #"BTC-USDT-SWAP"]
-
+  mode: live
   # 三类 K 线：trade / mark / index  → 映射到 candle / mark-price-candle / index-candle
   channels:
     candles:
