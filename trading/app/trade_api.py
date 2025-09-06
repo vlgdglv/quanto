@@ -9,7 +9,15 @@ class TradeAPI:
     Handles normalization, risk checks, idempotency/expTime, placement and optional waiting.
     """
 
-    def __init__(self, instrument_svc, account_svc, exec_svc, risk_svc, reconcile_svc, event_bus, logger):
+    def __init__(self, 
+                 instrument_svc, 
+                 account_svc, 
+                 exec_svc, 
+                 risk_svc, 
+                 reconcile_svc, 
+                 event_bus, 
+                 logger
+                 ):
         self.instrument_svc = instrument_svc
         self.account_svc = account_svc
         self.exec_svc = exec_svc

@@ -46,7 +46,7 @@ def _inst_type_from_inst(inst: str) -> str:
     return "ANY"
 
 def build_ws_url(cfg: dict, ws_kind: str) -> str:
-    mode = cfg["env"]["mode"]  # paper | live
+    mode = cfg["datafeed"]["mode"]  # paper | live
     ws_cfg = cfg["okx"]["ws"][mode]
     return ws_cfg.get(ws_kind, ws_cfg.get("public", ws_cfg.get("business")))
 

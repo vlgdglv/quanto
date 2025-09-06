@@ -108,7 +108,7 @@ class HttpClient:
 
         if self.session is None:
             timeout = aiohttp.ClientTimeout(total=self.timeout_ms / 1000)
-            self.session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
+            self.session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False, trust_env=True)
 
         self.log.debug(
             "HttpClient init base_url=%s env=%s key=%s",
@@ -121,7 +121,7 @@ class HttpClient:
     async def __aenter__(self) -> "HttpClient":
         if self._owned_session and (self.session is None or self.session.closed):
             timeout = aiohttp.ClientTimeout(total=self.timeout_ms / 1000.0)
-            self.session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
+            self.session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False, trust_env=True)
         return self
     
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -145,7 +145,7 @@ class HttpClient:
             raise OkxApiError("time_parse_error", f"unexpected server time payload: {resp}") from e
         local_ms = int(time.time() * 1000)
         self.clock_offset_ms = ts_server_ms - local_ms
-        self.log.info("server time synced: offset_ms=%d", self.clock_offset_ms)
+        self.log.info(f"Server time synced: offset_ms={self.clock_offset_ms}")
         return self.clock_offset_ms
     
     def _timestamp_iso(self) -> str:
@@ -216,7 +216,6 @@ class HttpClient:
         method = method.upper()
         query = _build_query(params)
         url = self.base_url + path + query
-        print("request:", method, url)
         body_str = _json_dumps_compact(json_body) if json_body else ""
         req_headers = {
             "Content-Type": "application/json", "Accept": "application/json"
