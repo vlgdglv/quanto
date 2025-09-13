@@ -4,48 +4,169 @@ from dataclasses import dataclass
 import pandas as pd
 from datafeed.handlers import channel_registry  # 你给的 register_channel 映射
 from feature.engine_pd import FeatureEnginePD
-
+import math
 from utils.logger import logger
 
-SNAPSHOT_FIELDS = [
-    "ema_fast","ema_slow","macd_dif","macd_dea","macd_hist",
-    "rsi","kdj_k","kdj_d","kdj_j",
-    "atr","rv_ewma","spread_bp","ofi_5s","obi_5"
-]
 
+HORIZON_MIN = [60, 180, 420]
+UNIVERSE = ["ETH-USDT-SWAP", "DOGE-USDT-SWAP"]
+
+def _to_float(x, default: float = 0.0) -> float:
+    try:
+        if x is None:
+            return default
+        v = float(x)
+        if math.isnan(v) or math.isinf(v):
+            return default
+        return v
+    except Exception:
+        return default
+
+def _to_int(x, default: int = 0) -> int:
+    try:
+        if x is None:
+            return default
+        v = int(x)
+        return v
+    except Exception:
+        return default
 
 def build_snapshot_from_row(row: dict) -> Dict[str, Any]:
     """
-    将一行 features（来自 FeatureEnginePD.update_candles 的输出）转换为 LLM 输入快照。
+    将一行 features（来自 FeatureEnginePD.update_candles 的输出）转换为 LLM 输入快照（新 schema）。
     约定：row['ts'] 为该 bar 的“收盘时刻”毫秒。
+    面向 1h–7h 短线（ETH/DOGE 永续），只暴露与决策高度相关的统计量。
     """
-    snap = {
-        "instId": row["instId"],
-        "tf": row["tf"],
-        "ts": int(row["ts"]),
-        "trend": {
-            "ema_fast": float(row.get("ema_fast", 0.0)),
-            "ema_slow": float(row.get("ema_slow", 0.0)),
-            "macd_dif": float(row.get("macd_dif", 0.0)),
-            "macd_dea": float(row.get("macd_dea", 0.0)),
-            "macd_hist": float(row.get("macd_hist", 0.0)),
-            "rsi": float(row.get("rsi", 50.0)),
-            "kdj_k": float(row.get("kdj_k", 50.0)),
-            "kdj_d": float(row.get("kdj_d", 50.0)),
-            "kdj_j": float(row.get("kdj_j", 50.0)),
+    instId = row.get("instId")
+    tf = row.get("tf")
+
+    snap: Dict[str, Any] = {
+        # 元信息
+        "instId": instId,
+        "tf": tf,
+        "ts": _to_int(row.get("ts")),
+        "universe": UNIVERSE,
+        "horizon_min": HORIZON_MIN,
+
+        # 市场横截面 snapshot（当前时点/近期直接量）
+        "snapshot": {
+            "last_price": _to_float(row.get("c")),  # 收盘价作为 last_price
+            "atr": _to_float(row.get("atr")),
+            "rv_ewma": _to_float(row.get("rv_ewma")),
+            "spread_bp": _to_float(row.get("spread_bp")),
+            "funding_rate": _to_float(row.get("funding_rate")),
+            "funding_premium_z": _to_float(row.get("funding_premium_z")),
+            "funding_time_to_next_min": _to_float(row.get("funding_time_to_next_min")),
+            "oi": _to_float(row.get("oi")),
+            "d_oi_rate": _to_float(row.get("d_oi_rate")),
         },
-        "volatility": {
-            "atr": float(row.get("atr", 0.0)),
-            "rv_ewma": float(row.get("rv_ewma", 0.0)),
+
+        # 趋势与动量（兼顾 1–7 小时窗）
+        "trend_momentum": {
+            "ema_fast": _to_float(row.get("ema_fast")),
+            "ema_slow": _to_float(row.get("ema_slow")),
+            "macd_dif": _to_float(row.get("macd_dif")),
+            "macd_hist": _to_float(row.get("macd_hist")),
+            "rsi": _to_float(row.get("rsi"), 50.0),
+
+            "s_mom_slope_H60m": _to_float(row.get("s_mom_slope_H60m")),
+            "s_mom_slope_H180m": _to_float(row.get("s_mom_slope_H180m")),
+            "s_mom_slope_H420m": _to_float(row.get("s_mom_slope_H420m")),
+
+            "s_rsi_mean_H60m": _to_float(row.get("s_rsi_mean_H60m"), 50.0),
+            "s_rsi_std_H60m": _to_float(row.get("s_rsi_std_H60m")),
+            "s_rsi_mean_H180m": _to_float(row.get("s_rsi_mean_H180m"), 50.0),
+            "s_rsi_std_H180m": _to_float(row.get("s_rsi_std_H180m")),
+            "s_rsi_mean_H420m": _to_float(row.get("s_rsi_mean_H420m"), 50.0),
+            "s_rsi_std_H420m": _to_float(row.get("s_rsi_std_H420m")),
         },
-        "micro": {
-            "spread_bp": float(row.get("spread_bp", 0.0)),
-            "ofi_5s": float(row.get("ofi_5s", 0.0)),
+
+        # 微观结构（短线最敏感）
+        "microstructure": {
+            "ofi_5s": _to_float(row.get("ofi_5s")),
+            "s_ofi_sum_30m": _to_float(row.get("s_ofi_sum_30m")),
+            "cvd": _to_float(row.get("cvd")),
+            "s_cvd_delta_H60m": _to_float(row.get("s_cvd_delta_H60m")),
+            "s_spread_bp_mean_H60m": _to_float(row.get("s_spread_bp_mean_H60m")),
+        },
+
+        # 波动/区间状态（识别 squeeze 与通道边界）
+        "volatility_regime": {
+            "s_squeeze_on_dur": _to_float(row.get("s_squeeze_on_dur")),
+            "donchian_width_norm": _to_float(row.get("donchian_width_norm")),
+            "s_donchian_dist_upper": _to_float(row.get("s_donchian_dist_upper")),
+            "s_donchian_dist_lower": _to_float(row.get("s_donchian_dist_lower")),
+        },
+
+        # 持仓/定位（资金与仓位的节奏）
+        "positioning": {
+            "s_oi_rate_H60m": _to_float(row.get("s_oi_rate_H60m")),
+            "s_oi_rate_H180m": _to_float(row.get("s_oi_rate_H180m")),
+            "s_oi_rate_H420m": _to_float(row.get("s_oi_rate_H420m")),
         },
     }
-    if "obi_5" in row:
-        snap["micro"]["obi_5"] = float(row.get("obi_5") or 0.0)
+
+    # —— 可选增强：若存在以下列，则自动并入（对 ETH/DOGE 某些交易所数据有用）——
+    # 1) kyle_lambda / vpin 代表冲击成本与流动性不对称，可放入 microstructure.extra
+    extras_micro = {}
+    if "kyle_lambda" in row:
+        extras_micro["kyle_lambda"] = _to_float(row.get("kyle_lambda"))
+    if "vpin" in row:
+        extras_micro["vpin"] = _to_float(row.get("vpin"))
+    if extras_micro:
+        snap["microstructure"]["extra"] = extras_micro
+
+    # 2) 若你需要 MACD 正负连击作为趋势延续特征（已在列中提供），则放入 trend_momentum.extra
+    extras_trend = {}
+    if "s_macd_pos_streak" in row:
+        extras_trend["s_macd_pos_streak"] = _to_float(row.get("s_macd_pos_streak"))
+    if "s_macd_neg_streak" in row:
+        extras_trend["s_macd_neg_streak"] = _to_float(row.get("s_macd_neg_streak"))
+    if extras_trend:
+        snap["trend_momentum"]["extra"] = extras_trend
+
     return snap
+
+
+# SNAPSHOT_FIELDS = [
+#     "ema_fast","ema_slow","macd_dif","macd_dea","macd_hist",
+#     "rsi","kdj_k","kdj_d","kdj_j",
+#     "atr","rv_ewma","spread_bp","ofi_5s","obi_5"
+# ]
+
+
+# def build_snapshot_from_row(row: dict) -> Dict[str, Any]:
+#     """
+#     将一行 features（来自 FeatureEnginePD.update_candles 的输出）转换为 LLM 输入快照。
+#     约定：row['ts'] 为该 bar 的“收盘时刻”毫秒。
+#     """
+#     snap = {
+#         "instId": row["instId"],
+#         "tf": row["tf"],
+#         "ts": int(row["ts"]),
+#         "trend": {
+#             "ema_fast": float(row.get("ema_fast", 0.0)),
+#             "ema_slow": float(row.get("ema_slow", 0.0)),
+#             "macd_dif": float(row.get("macd_dif", 0.0)),
+#             "macd_dea": float(row.get("macd_dea", 0.0)),
+#             "macd_hist": float(row.get("macd_hist", 0.0)),
+#             "rsi": float(row.get("rsi", 50.0)),
+#             "kdj_k": float(row.get("kdj_k", 50.0)),
+#             "kdj_d": float(row.get("kdj_d", 50.0)),
+#             "kdj_j": float(row.get("kdj_j", 50.0)),
+#         },
+#         "volatility": {
+#             "atr": float(row.get("atr", 0.0)),
+#             "rv_ewma": float(row.get("rv_ewma", 0.0)),
+#         },
+#         "micro": {
+#             "spread_bp": float(row.get("spread_bp", 0.0)),
+#             "ofi_5s": float(row.get("ofi_5s", 0.0)),
+#         },
+#     }
+#     if "obi_5" in row:
+#         snap["micro"]["obi_5"] = float(row.get("obi_5") or 0.0)
+#     return snap
 # {
 #   "snapshot": {
 #     "last_price": 112238,
