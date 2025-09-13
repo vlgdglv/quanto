@@ -72,7 +72,7 @@ def _build_trade_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dic
 def _build_book_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
-    level = channel_cfg.get("level", 400)
+    level = channel_cfg.get("level", 5)
     if level == 400:
         ch = "books"
     elif level == 5:

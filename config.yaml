@@ -18,14 +18,14 @@ okx:
       private:  wss://wseeapap.okx.com:8443/ws/v5/private
 
 datafeed:
-  instIds: ["ETH-USDT-SWAP"] #"BTC-USDT-SWAP"]
+  instIds: ["DOGE-USDT-SWAP"] #"BTC-USDT-SWAP"]
   mode: live
   # 三类 K 线：trade / mark / index  → 映射到 candle / mark-price-candle / index-candle
   channels:
     candles:
       fetch: true
       kind: "trade"
-      bars: ["1m","15m","1H"]
+      bars: ["5m","15m","30m","1H"]
     trades:
       fetch: true
     books:
@@ -84,7 +84,7 @@ agent:
   align_to_5m: false
 
 cold_start:
-  duration_sec: 600
+  duration_sec: 60
   min_snapshots: 0
 
 auth:

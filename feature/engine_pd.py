@@ -271,6 +271,8 @@ class EWVarState:
     lam: float = 0.94
     mean: Optional[float] = None
     var: Optional[float] = None
+    warmup_min_n: int = 15
+    n: int = 0
 
 class _MonoMax:
     def __init__(self):
@@ -393,12 +395,15 @@ def kdj_update(state: KDJState, high: float, low: float, close: float,
 
 def ewma_var_update(state: EWVarState, x: float) -> float:
     if state.mean is None:
-        state.mean, state.var = x, 0.0
-    else:
-        m_prev = state.mean
-        state.mean = state.lam * state.mean + (1.0 - state.lam) * x
-        state.var = state.lam * state.var + (1.0 - state.lam) * (x - m_prev) * (x - state.mean)
-    return max(state.var or 0.0, 0.0)
+        state.mean, state.var, state.n = float(x), 0.0, 1
+        return math.nan 
+    m_prev = state.mean
+    lam = state.lam
+    state.mean = lam * state.mean + (1.0 - lam) * x
+    incr = (x - m_prev) * (x - state.mean)
+    state.var = (lam * (state.var if state.var is not None else 0.0)) + (1.0 - lam) * incr
+    state.n += 1
+    return state.var if state.n >= state.warmup_min_n else math.nan
 
 @dataclass
 class QIMicropriceState:
@@ -476,6 +481,10 @@ class KyleLambdaState:
     sxy: float = 0.0
     value: float = 0.0
     last_mid: Optional[float] = None
+    min_sxx: float = 1e-4       # 热身阈值：累计“信息量”前不输出
+    nonneg: bool = True         # 是否投影到非负
+    use_return: bool = False    # 用对数收益而不是价差
+    ret_eps: float = 1e-12
 
 def kyle_lambda_update(state: KyleLambdaState, 
                        mid: float, 
@@ -491,16 +500,28 @@ def kyle_lambda_update(state: KyleLambdaState,
         state.last_mid = float(mid)
         return state.value
     
-    dm = float(mid) - state.last_mid
+    if state.use_return:
+        dm = math.log(max(mid, state.ret_eps)) - math.log(max(state.last_mid, state.ret_eps))
+    else:
+        dm = float(mid) - state.last_mid
     q = float(signed_size)
 
     a = state.alpha
     state.sxx = (1 - a) * state.sxx + a * (q * q)
     state.sxy = (1 - a) * state.sxy + a * (q * dm)
-    state.value = state.sxy / max(state.sxx, 1e-12)
+    if state.sxx >= state.min_sxx:
+        est = state.sxy / state.sxx if state.sxx > 0 else math.nan
+        state.value = max(0.0, est) if (state.nonneg and math.isfinite(est)) else est
+    else:
+        state.value = math.nan  # 热身期间不报数
 
     state.last_mid = float(mid)
     return state.value
+
+    # state.value = state.sxy / max(state.sxx, 1e-12)
+
+    # state.last_mid = float(mid)
+    # return state.value
 
 # ========= VPIN =========
 @dataclass
@@ -895,7 +916,6 @@ class FeatureEnginePD:
                 cloesd = True
                 cloesd_ts = ts
                 continue
-            print(ts, o, h, l, c)
             ohlc_update(state.ohlc, (o, h, l, c))
 
             dif, dea, hist = macd_update(state.macd, c)
