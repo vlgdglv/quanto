@@ -6,11 +6,8 @@ from feature.processor import FeatureEngineProcessor
 from feature.engine_pd import FeatureEnginePD
 from feature.writer import FeatureWriter
 from feature.sinks import CSVFeatureSink
-
-
-def load_cfg():
-    with open(Path(__file__).resolve().parents[1] / "config.yaml", "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+from utils.logger import logger
+from utils.config import load_cfg
     
 async def main():
     cfg = load_cfg()

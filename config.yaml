@@ -3,8 +3,6 @@ okx:
   rest_base:
     live:  https://www.okx.com
     paper: https://eea.okx.com
-  
-
   # WebSocket 域名
   ws:
     live:
@@ -18,7 +16,7 @@ okx:
       private:  wss://wseeapap.okx.com:8443/ws/v5/private
 
 datafeed:
-  instIds: ["DOGE-USDT-SWAP"] #"BTC-USDT-SWAP"]
+  instIds: ["ETH-USDT-SWAP"] #"DOGE-USDT-SWAP",
   mode: live
   # 三类 K 线：trade / mark / index  → 映射到 candle / mark-price-candle / index-candle
   channels:
@@ -84,7 +82,7 @@ agent:
   align_to_5m: false
 
 cold_start:
-  duration_sec: 60
+  duration_sec: 300
   min_snapshots: 0
 
 auth:
@@ -96,7 +94,6 @@ trading:
   env: PAPER                # PAPER / LIVE
   simulated_header: true
   instType: SWAP
-  symbols: [BTC-USDT-SWAP, ETH-USDT-SWAP]
   leverage: 5
   posMode: net              # net / long_short
   tdMode: cross             # cross / isolated

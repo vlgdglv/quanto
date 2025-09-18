@@ -7,12 +7,16 @@ import contextlib
 import asyncio, yaml
 from pathlib import Path
 from typing import Dict, Any
-from agent.the_agent import Agent
+
+from agent.agent_house import Agent
+from agent.chat_models import llm_factory
 from agent.schema import ActionProposal
+
 from feature.engine_pd import FeatureEnginePD
 from feature.processor import FeatureEngineProcessor
 from datafeed.pipeline import DataPipeline
 from utils.logger import logger
+from utils.config import load_cfg
 
 from feature.writer import FeatureWriter
 from feature.sinks import CSVFeatureSink
@@ -20,6 +24,7 @@ from feature.sinks import CSVFeatureSink
 from agent.interaction_writer import InteractionWriter
 
 from pathlib import Path
+
 
 def _write_jsonl(path: str, data: dict):
     """同步追加一行 JSON；由 append_jsonl 在线程池里调用，避免阻塞事件循环"""
@@ -44,10 +49,6 @@ _last_call_mono = 0.0    # 记录上一次真正出手调用的时间（time.mon
 SNAPSHOT_QUEUE: asyncio.Queue = asyncio.Queue(maxsize=256)
 
 load_dotenv()
-
-def load_cfg():
-    with open(Path(__file__).resolve().parents[1] / "config.yaml", "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 class ColdStartGate:
     def __init__(self, duration_sec: int = 0, min_snapshots: int = 0):
@@ -138,12 +139,12 @@ async def snapshot_consumer(agent: Agent, gate: ColdStartGate, interaction_path:
                     try:
                         rec = {
                             "t": int(time.time() * 1000),
+                            "tf": snapshot.get("tf"),
+                            "instId": snapshot.get("instId"),
+                            "snap_ts": snapshot.get("ts"),
                             "kind": "ok",
                             "proposal": proposal.model_dump(),
-                            "instId": snapshot.get("instId"),
-                            "tf": snapshot.get("tf"),
-                            "snap_ts": snapshot.get("ts"),
-                            "snapshot": snapshot,                       # 也可改为只存摘要以节省体积
+                            "snapshot": snapshot,
                             }
                         await append_jsonl(interaction_path, rec)
                     except Exception as _:
@@ -178,9 +179,8 @@ async def snapshot_consumer(agent: Agent, gate: ColdStartGate, interaction_path:
             try:
                 rec = {
                     "t": int(time.time() * 1000),
-                    "kind": "error",
-                    "instId": snapshot.get("instId"),
                     "tf": snapshot.get("tf"),
+                    "instId": snapshot.get("instId"),
                     "snap_ts": snapshot.get("ts"),
                     "snapshot": snapshot,
                     "error": str(e),
@@ -221,7 +221,8 @@ async def main():
     try:
         engine = FeatureEnginePD(enable_summary=True)
         # 将交互写入器注入 Agent
-        agent = Agent(model="gpt-4o", temperature=1.0)
+        
+        agent = Agent(model="gpt-4o", temperature=0.0, llm_factory=llm_factory)
 
         processor = FeatureEngineProcessor(cfg, engine, on_snapshot=make_on_snapshot(), feature_writer=writer)
         consumer_task = asyncio.create_task(snapshot_consumer(agent, gate, interactions_path))

@@ -28,22 +28,14 @@ _SYS = load_prompt("sys_prompt.txt")
 _TEMPLATE = load_prompt("user_template.txt")
 
 
+
+
 class Agent:
     def __init__(self, 
                  model="gpt-4o", 
                  temperature=1.0,
                  interaction_writer: Optional[InteractionWriter] = None):
         self.llm = ChatOpenAI(model=model, temperature=temperature, max_retries=0, timeout=60)
-        # self.llm = ChatOpenAI(
-        #     model=model,
-        #     temperature=temperature,
-        #     max_retries=0,
-        #     timeout=60,
-        #     openai_api_base="https://api.deepseek.com",
-        #     extra_body={
-        #         "response_format": {"type": "json_object"}
-        #     }
-        # )
         self.parser = PydanticOutputParser(pydantic_object=ActionProposal)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", _SYS),
