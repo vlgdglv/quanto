@@ -5,7 +5,6 @@ import asyncio, json, time, websockets
 from typing import Dict, Any, Callable, Awaitable, Iterable, Optional
 
 Json = Dict[str, Any]
-OnJson = Callable[[Json], Awaitable[None]]
 
 class WSClient:
     def __init__(self, 
@@ -78,23 +77,11 @@ class WSClient:
                 return
             await asyncio.sleep(self.ping_interval)
     
-    async def run_forever(self, on_json: OnJson):
+    async def run_forever(self, on_json: Callable[[Json], Awaitable[None]]):
         retry = 0
-        msg_queue: asyncio.Queue = asyncio.Queue(maxsize=8192)
-
-        async def consumer():
-            while not self._stop:
-                msg = await msg_queue.get()
-                try:
-                    await on_json(msg)
-                except Exception:
-                    logger.exception("On_json error!")
-                finally:
-                    msg_queue.task_done()
 
         while not self._stop:
             hb = None
-            consumer_task = None
             try:
                 logger.info(f"WS connect: connecting to {self.url} (retry={retry})")
                 async with websockets.connect(self.url, ping_interval=None, close_timeout=30) as ws:
@@ -105,8 +92,9 @@ class WSClient:
                     await self._subscribe()
                     logger.info("WS subscribe: sent, start receiving")
 
-                    consumer_task = asyncio.create_task(consumer())
                     hb = asyncio.create_task(self._heartbeat())
+                    
+                    # main read loop
                     async for msg in ws:
                         try:
                             data = json.loads(msg)
@@ -118,11 +106,11 @@ class WSClient:
                             continue
 
                         try:
-                            msg_queue.put_nowait(data)
-                        except asyncio.QueueFull:
+                            await on_json(data)
+                        except Exception:
                             logger.warning("WS queue full, dropping a message")
             except asyncio.CancelledError:
-                raise        
+                raise
             except Exception as e:
                 logger.exception("WS loop: exception")
                 backoff = min(self.reconnect_cap_s, 2 ** min(retry, 6))
@@ -133,10 +121,6 @@ class WSClient:
                     hb.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await hb
-                if consumer_task:
-                    consumer_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await consumer_task
                 try:
                     if self._ws:
                         await self._ws.close()  

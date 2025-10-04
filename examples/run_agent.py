@@ -11,6 +11,7 @@ from typing import Dict, Any
 from agent.agent_house import Agent
 from agent.chat_models import llm_factory
 from agent.schema import ActionProposal
+from agent.bb_agents import LLMDecider, Decision
 
 from feature.engine_pd import FeatureEnginePD
 from feature.processor import FeatureEngineProcessor
@@ -133,9 +134,10 @@ async def snapshot_consumer(agent: Agent, gate: ColdStartGate, interaction_path:
             last_exc = None
             for _ in range(RETRY_MAX):
                 try:
-                    proposal: ActionProposal = await asyncio.to_thread(_do_call)
+                    # proposal: ActionProposal = await asyncio.to_thread(_do_call)
+                    decision: Decision = await asyncio.to_thread(_do_call)
                     _last_call_mono = time.monotonic()
-                    print("PROPOSAL", proposal.model_dump())
+                    print("PROPOSAL", decision)
                     try:
                         rec = {
                             "t": int(time.time() * 1000),
@@ -143,7 +145,7 @@ async def snapshot_consumer(agent: Agent, gate: ColdStartGate, interaction_path:
                             "instId": snapshot.get("instId"),
                             "snap_ts": snapshot.get("ts"),
                             "kind": "ok",
-                            "proposal": proposal.model_dump(),
+                            "proposal": decision,
                             "snapshot": snapshot,
                             }
                         await append_jsonl(interaction_path, rec)
@@ -172,8 +174,6 @@ async def snapshot_consumer(agent: Agent, gate: ColdStartGate, interaction_path:
             else:
                 raise RuntimeError(f"Agent call failed after retries: {last_exc}") from last_exc
 
-            # proposal: ActionProposal = await asyncio.to_thread(agent.propose, snapshot)
-            # print("PROPOSAL", proposal.model_dump())
         except Exception as e:
             print("Agent Error:", e)
             try:
@@ -205,8 +205,6 @@ async def main():
         min_snapshots=cold_cfg.get("min_snapshots", 0),
     )
 
-    
-
     # === Feature Writer 管线（与 run_features 对齐） ===
     persist_cfg = (cfg or {}).get("persist", {})
     csv_path   = persist_cfg.get("csv_path", "data/features.csv")
@@ -222,8 +220,8 @@ async def main():
         engine = FeatureEnginePD(enable_summary=True)
         # 将交互写入器注入 Agent
         
-        agent = Agent(model="gpt-4o", temperature=0.0, llm_factory=llm_factory)
-
+        # agent = Agent(model="gpt-4o", temperature=0.0, llm_factory=llm_factory)
+        agent = LLMDecider(model="gpt-4o", temperature=0.3, mode="single")
         processor = FeatureEngineProcessor(cfg, engine, on_snapshot=make_on_snapshot(), feature_writer=writer)
         consumer_task = asyncio.create_task(snapshot_consumer(agent, gate, interactions_path))
         pipe = DataPipeline(cfg, processor=processor)

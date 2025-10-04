@@ -45,7 +45,6 @@ class Agent:
         logger.info("Agent initialized")
 
     def _build_user_text(self, snapshot: Dict[str, Any]) -> str:
-        # 让 user 模板中 {snapshot} 成为已序列化字符串；format_instr 另行注入
         return (_TEMPLATE).replace("{snapshot}", json.dumps(snapshot, ensure_ascii=False))
 
     def propose(self, snapshot: Dict) -> ActionProposal:

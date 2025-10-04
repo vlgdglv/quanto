@@ -3,15 +3,6 @@ from typing import Dict, Any, Iterable, List, Set, DefaultDict
 from collections import defaultdict
 import re
 
-# def build_ws_url(cfg: dict) -> str:
-#     mode = cfg["env"]["mode"]  # paper | live
-#     ws_cfg = cfg["okx"]["ws"][mode]
-#     use_business = cfg["datafeed"].get("use_business", False)
-#     if use_business:
-#         return ws_cfg["business"]
-#     # 默认公共
-#     return ws_cfg.get("public", ws_cfg.get("business"))
-
 def _index_from_inst(inst: str) -> str:
     """
     把合约/期货/期权的 instId 还原成指数ID（uly）：
@@ -186,7 +177,6 @@ def build_subscribe_args(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _ws_kind_for_channle(cfg: Dict[str, Any], category: str) -> str:
-    # 默认路由：c/t/b -> public；mp/fr -> business
     defaults = {
         "candles": "public",
         "trades": "public",

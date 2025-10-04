@@ -40,13 +40,6 @@ def build_snapshot_from_row(
     constraints: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    升级版：只做 *结构增强*，不做派生/标准化/百分位等数值加工。
-    - 透传你现有字段
-    - 合并可选 state / constraints / meta
-    - 附带 data_quality / availability 供 LLM 感知可用性
-    - 附带 llm_config（权重/阈值/护栏协议），仅作“协议提示”，不进行任何计算
-    """
     def _to_int(x): 
         try: return int(x) if x is not None else None
         except: return None
@@ -60,7 +53,6 @@ def build_snapshot_from_row(
     instId = row.get("instId")
     tf = row.get("tf")
 
-    # ===== 原始结构（与你现有的一致）=====
     snap: Dict[str, Any] = {
         "instId": instId,
         "tf": tf,
@@ -119,7 +111,6 @@ def build_snapshot_from_row(
         },
     }
 
-    # —— 额外可透传（保持你已有的扩展语义）
     extras_micro = {}
     if "kyle_lambda" in row: extras_micro["kyle_lambda"] = _to_float(row.get("kyle_lambda"))
     if "vpin" in row: extras_micro["vpin"] = _to_float(row.get("vpin"))

@@ -13,8 +13,6 @@ async def main():
     cfg = load_cfg()
     persist_cfg = (cfg or {}).get("persist", {})
     csv_path   = persist_cfg.get("csv_path", "data/features.csv")
-    # sqlite_db  = persist_cfg.get("sqlite_path", "data/features.db")
-    # table_name = persist_cfg.get("sqlite_table", "features")
     flush_s    = float(persist_cfg.get("flush_interval_s", 5))
     max_rows   = int(persist_cfg.get("max_buffer_rows", 1000))
     sinks = [
