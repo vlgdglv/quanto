@@ -1,24 +1,21 @@
 okx:
-  # REST 主要用于冷启动回补（此处先留着）
   rest_base:
     live:  https://www.okx.com
     paper: https://eea.okx.com
-  # WebSocket 域名
   ws:
     live:
       public:   wss://ws.okx.com:8443/ws/v5/public
       private:  wss://ws.okx.com:8443/ws/v5/private
       business: wss://ws.okx.com:8443/ws/v5/business
     paper:
-      # 业务频道（如 mark-price-candle*）建议统一走 business
       business: wss://wspap.okx.com:8443/ws/v5/business
       public:   wss://wspap.okx.com:8443/ws/v5/public
       private:  wss://wseeapap.okx.com:8443/ws/v5/private
 
 datafeed:
-  instIds: ["DOGE-USDT-SWAP"] #"DOGE-USDT-SWAP",
+  instIds: ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "DOGE-USDT-SWAP", ] #"DOGE-USDT-SWAP",
   mode: live
-  # 三类 K 线：trade / mark / index  → 映射到 candle / mark-price-candle / index-candle
+  
   channels:
     candles:
       fetch: true
@@ -42,7 +39,6 @@ datafeed:
       fetch: false
     price-limit:
       fetch: false
-    
     
   ws_kind_per_channel:
     candles:      business

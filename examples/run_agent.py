@@ -218,9 +218,6 @@ async def main():
 
     try:
         engine = FeatureEnginePD(enable_summary=True)
-        # 将交互写入器注入 Agent
-        
-        # agent = Agent(model="gpt-4o", temperature=0.0, llm_factory=llm_factory)
         agent = LLMDecider(model="gpt-4o", temperature=0.3, mode="single")
         processor = FeatureEngineProcessor(cfg, engine, on_snapshot=make_on_snapshot(), feature_writer=writer)
         consumer_task = asyncio.create_task(snapshot_consumer(agent, gate, interactions_path))
@@ -238,8 +235,6 @@ async def main():
             with contextlib.suppress(asyncio.CancelledError):
                 await consumer_task
     finally:
-        # 停止顺序：先关交互，再关特征写入器（都 flush）
-        # await interact_writer.stop()
         await writer.stop()
 
 

@@ -2,8 +2,7 @@
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 import pandas as pd
-from datafeed.handlers import channel_registry  # 你给的 register_channel 映射
-from feature.engine_pd import FeatureEnginePD
+
 import math
 from utils.logger import logger
 from copy import deepcopy
@@ -260,92 +259,6 @@ def dep_build_snapshot_from_row(row: dict) -> Dict[str, Any]:
         snap["trend_momentum"]["extra"] = extras_trend
 
     return snap
-
-
-# SNAPSHOT_FIELDS = [
-#     "ema_fast","ema_slow","macd_dif","macd_dea","macd_hist",
-#     "rsi","kdj_k","kdj_d","kdj_j",
-#     "atr","rv_ewma","spread_bp","ofi_5s","obi_5"
-# ]
-
-
-# def build_snapshot_from_row(row: dict) -> Dict[str, Any]:
-#     """
-#     将一行 features（来自 FeatureEnginePD.update_candles 的输出）转换为 LLM 输入快照。
-#     约定：row['ts'] 为该 bar 的“收盘时刻”毫秒。
-#     """
-#     snap = {
-#         "instId": row["instId"],
-#         "tf": row["tf"],
-#         "ts": int(row["ts"]),
-#         "trend": {
-#             "ema_fast": float(row.get("ema_fast", 0.0)),
-#             "ema_slow": float(row.get("ema_slow", 0.0)),
-#             "macd_dif": float(row.get("macd_dif", 0.0)),
-#             "macd_dea": float(row.get("macd_dea", 0.0)),
-#             "macd_hist": float(row.get("macd_hist", 0.0)),
-#             "rsi": float(row.get("rsi", 50.0)),
-#             "kdj_k": float(row.get("kdj_k", 50.0)),
-#             "kdj_d": float(row.get("kdj_d", 50.0)),
-#             "kdj_j": float(row.get("kdj_j", 50.0)),
-#         },
-#         "volatility": {
-#             "atr": float(row.get("atr", 0.0)),
-#             "rv_ewma": float(row.get("rv_ewma", 0.0)),
-#         },
-#         "micro": {
-#             "spread_bp": float(row.get("spread_bp", 0.0)),
-#             "ofi_5s": float(row.get("ofi_5s", 0.0)),
-#         },
-#     }
-#     if "obi_5" in row:
-#         snap["micro"]["obi_5"] = float(row.get("obi_5") or 0.0)
-#     return snap
-# {
-#   "snapshot": {
-#     "last_price": 112238,
-#     "atr": 105.4,
-#     "rv_ewma": 0.0,
-#     "spread_bp": 0.01,
-#     "funding_rate": 0.0001,
-#     "funding_premium_z": -0.000217,
-#     "funding_time_to_next_min": 858.0,
-#     "oi": 2734128.43,
-#     "d_oi_rate": 1.3e-05
-#   },
-#   "trend_momentum": {
-#     "ema_fast": 112238,
-#     "ema_slow": 112238,
-#     "macd_dif": 0.0,
-#     "macd_hist": 0.0,
-#     "rsi": 50.0,
-#     "s_mom_slope_H60m": 0.0,
-#     "s_mom_slope_H180m": 0.0,
-#     "s_mom_slope_H420m": 0.0,
-#     "s_rsi_mean_H60m": 50.0,
-#     "s_rsi_std_H60m": 0.0089,
-#     "...": "..."
-#   },
-#   "microstructure": {
-#     "ofi_5s": -70.37,
-#     "s_ofi_sum_30m": -70.37,
-#     "cvd": 801.79,
-#     "s_cvd_delta_H60m": 0.0,
-#     "s_spread_bp_mean_H60m": 0.0089
-#   },
-#   "volatility_regime": {
-#     "s_squeeze_on_dur": 1.0,
-#     "donchian_width_norm": 0.367,
-#     "s_donchian_dist_upper": 1023.2,
-#     "s_donchian_dist_lower": 511.4
-#   },
-#   "positioning": {
-#     "s_oi_rate_H60m": 0.0,
-#     "s_oi_rate_H180m": 0.0,
-#     "s_oi_rate_H420m": 0.0
-#   }
-# }
-
 
 @dataclass
 class _KeyState:

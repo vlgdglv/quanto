@@ -1,9 +1,0 @@
-from typing import Protocol, Any, Dict, AsyncIterator
-
-class EventBus(Protocol):
-    async def publish(self, topic: str, event: Dict[str, Any]) -> None: ...
-    async def subscribe(self, topic: str) -> AsyncIterator[Dict[str, Any]]: ...
-
-class AgentPort(Protocol):
-    """统一的 Agent 端口；无论是你的简单 Agent 还是 LangChain 集群都实现它。"""
-    async def propose(self, snapshot: Dict[str, Any]) -> Dict[str, Any]: ...

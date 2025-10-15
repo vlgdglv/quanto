@@ -3,6 +3,7 @@ from typing import Dict, Any, Iterable, List, Set, DefaultDict
 from collections import defaultdict
 import re
 
+
 def _index_from_inst(inst: str) -> str:
     """
     把合约/期货/期权的 instId 还原成指数ID（uly）：
@@ -17,6 +18,7 @@ def _index_from_inst(inst: str) -> str:
     return inst
 
 _inst_type_pat_futures = re.compile(r"-\d{6,8}$") 
+
 
 def _inst_type_from_inst(inst: str) -> str:
     """
@@ -35,6 +37,7 @@ def _inst_type_from_inst(inst: str) -> str:
     if inst.count("-") == 1:
         return "MARGIN"
     return "ANY"
+
 
 def build_ws_url(cfg: dict, ws_kind: str) -> str:
     mode = cfg["datafeed"]["mode"]  # paper | live
@@ -55,10 +58,12 @@ def _build_candle_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Di
     prefix = prefix_map.get(kind, "candle")
     return [{"channel": f"{prefix}{bar}", "instId": inst} for inst in insts for bar in bars]
 
+
 def _build_trade_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "trades", "instId": inst} for inst in insts]
+
 
 def _build_book_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
@@ -74,20 +79,24 @@ def _build_book_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict
         ch = "books"
     return [{"channel": ch, "instId": inst} for inst in insts]
 
+
 def _build_market_price_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "mark-price", "instId": inst} for inst in insts]
+
 
 def _build_funding_rate_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "funding-rate", "instId": inst} for inst in insts]
 
+
 def _build_open_interest_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     if not channel_cfg.get("fetch", False):
         return []
     return [{"channel": "open-interest", "instId": inst} for inst in insts]
+
 
 def _build_index_tickers_args(channel_cfg: Dict[str, Any], insts: List[str]) -> List[Dict[str, Any]]:
     """
@@ -188,6 +197,7 @@ def _ws_kind_for_channle(cfg: Dict[str, Any], category: str) -> str:
     override = cfg.get("datafeed", {}).get("ws_kind_per_channel", {})
     return override.get(category, defaults.get(category, "public"))
 
+
 def build_ws_plan(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     返回一个极简 plan 列表，每个元素含：url、args、ws_kind
@@ -200,13 +210,11 @@ def build_ws_plan(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     insts = datafeed.get("instIds", [])
     ch_cfgs = datafeed.get("channels", {})
 
-    # 先按“大类 channel”构建各自的 args
     channel_args: Dict[str, List[Dict[str, Any]]] = {}
     for channel, builder in _channel_builders.items():
         cfg_i = ch_cfgs.get(channel, {})
         channel_args[channel] = builder(cfg_i, insts)
 
-    # 额外频道（若有）默认归到 public（你也可以自己扩展，但尽量少动）
     extra = []
     for ch in datafeed.get("extra_channels", []):
         for inst in insts:
@@ -214,7 +222,6 @@ def build_ws_plan(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     if extra:
         channel_args.setdefault("extra", []).extend(extra)
 
-    # 将每个“大类 channel”的 args 按其 ws_kind 汇总
     grouped: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
     for channel, args in channel_args.items():
         if not args:
@@ -222,7 +229,6 @@ def build_ws_plan(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
         ws_kind = _ws_kind_for_channle(cfg, channel if channel in _channel_builders else "candles")
         grouped[ws_kind].extend(args)
 
-    # 产出 plan
     plan: List[Dict[str, Any]] = []
     for ws_kind, args in grouped.items():
         if not args:
@@ -233,3 +239,35 @@ def build_ws_plan(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
             "args": args
         })
     return plan
+
+
+def build_args_for_one_inst_grouped_by_kind(cfg: Dict[str, Any], inst: str) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    复用本文件已有的 _channel_builders / _ws_kind_for_channle，
+    为【单个 instrument】构建订阅参数，并按照 ws_kind 分组:
+    返回形如：
+      {"public":   [{"channel":"trades","instId":"BTC-USDT-SWAP"}, ...],
+       "business": [{"channel":"mark-price","instId":"BTC-USDT-SWAP"}]}
+    """
+    datafeed = cfg.get("datafeed", {})
+    ch_cfgs  = datafeed.get("channels", {})
+    insts    = [inst]
+
+    channel_args: Dict[str, List[Dict[str, Any]]] = {}
+    for channel, builder in _channel_builders.items():
+        cfg_i = ch_cfgs.get(channel, {})
+        channel_args[channel] = builder(cfg_i, insts)
+
+    extra = []
+    for ch in datafeed.get("extra_channels", []):
+        extra.append({"channel": ch, "instId": inst})
+    if extra:
+        channel_args.setdefault("extra", []).extend(extra)
+
+    grouped: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for channel, args in channel_args.items():
+        if not args:
+            continue
+        ws_kind = _ws_kind_for_channle(cfg, channel if channel in _channel_builders else "candles")
+        grouped[ws_kind].extend(args)
+    return grouped

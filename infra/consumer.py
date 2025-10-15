@@ -1,6 +1,6 @@
 import asyncio, json, logging, signal
 from typing import Callable, Awaitable, Optional, Dict, Any, Tuple, List
-import aioredis
+import redis.asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +102,8 @@ class StreamConsumer:
                     for entry_id, fields in entries:
                         try:
                             data = json.loads(fields[b"data"])
-                            await self.handler(data)           # 业务处理
-                            await self._ack(entry_id)          # 成功才 ACK
+                            await self.handler(data)
+                            await self._ack(entry_id)
                         except Exception:
                             logger.exception("Handler failed for entry %s", entry_id)
         finally:

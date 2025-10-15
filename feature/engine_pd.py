@@ -218,9 +218,6 @@ def round_numeric_columns(df, round_specs, do_round=True):
     return df
 
 
-# -----------
-# 
-# -----------
 @dataclass
 class OHLCState:
     open: float = None
@@ -769,7 +766,7 @@ class DerivedState:
     version: str = "v1"         # 可用 summarizer 配置 hash
     dirty: bool = False   
 
-   
+
 class FeatureEnginePD:
     """
     DataFrame 流式处理：
@@ -847,7 +844,6 @@ class FeatureEnginePD:
     
     # ----------- books -> spread_bp -----------
     def update_books(self, df_books: pd.DataFrame, instId: str, tf: str):
-        
         if df_books is None or df_books.empty: return
         state = self._get_shared_state(instId)
 
@@ -913,9 +909,8 @@ class FeatureEnginePD:
             except Exception:
                 is_close = str(confirm_val).lower() in ("1", "true", "t", "yes", "y")
             if not is_close:
-                cloesd = True
-                cloesd_ts = ts
                 continue
+
             ohlc_update(state.ohlc, (o, h, l, c))
 
             dif, dea, hist = macd_update(state.macd, c)
@@ -965,7 +960,7 @@ class FeatureEnginePD:
                     d_oi_rate=(shared.oi.d_oi_rate if shared and shared.oi else np.nan),
                 )
                 dstate = self._get_derived(instId, tf)
-                dstate.last_ts = ts     # 注意：ts 是“收盘时间”
+                dstate.last_ts = ts
                 dstate.last_tf = tf
                 dstate.summary = sum_dict or {}
                 dstate.dirty = True
@@ -989,7 +984,7 @@ class FeatureEnginePD:
         frs = state.funding
 
         for _, r in df_funding_rate.iterrows():
-            # 取值（容错多个命名）
+
             ts = int(r.get("ts", r.get("timestamp", 0)) or 0)
             fr = float(r.get("fundingRate", r.get("funding_rate", np.nan)) or np.nan)
             prem = float(r.get("premium", r.get("premium_index", np.nan)) or np.nan)
@@ -1002,13 +997,11 @@ class FeatureEnginePD:
             funding_time = int(ftime) if pd.notna(ftime) and ftime is not None else None
             next_funding_time = int(nft) if pd.notna(nft) and nft is not None else None
 
-            # 更新原始
             if pd.notna(fr):
                 frs.funding_rate = fr
                 ema_update(frs.fr_ema, fr)
             if pd.notna(prem):
                 frs.premium = prem
-                # prem 的 EW 统计用于 z-score
                 _ = ewma_var_update(frs.prem_rv, prem)
                 ema_update(frs.prem_ema, prem)
                 if frs.prem_rv.mean is not None and frs.prem_rv.var is not None and frs.prem_rv.var >= 0:
@@ -1022,11 +1015,9 @@ class FeatureEnginePD:
             frs.funding_time = funding_time
             frs.next_funding_time = next_funding_time
 
-            # 年化（默认 8 小时结算）
             if pd.notna(frs.funding_rate):
                 frs.annualized = _annualize_funding_rate(float(frs.funding_rate))
 
-            # 与“当前 bar 收盘 ts”无关时先计算一个到下一次 funding 的剩余分钟（基于该行 ts）
             if next_funding_time is not None and ts:
                 dt_ms = max(next_funding_time - ts, 0)
                 frs.time_to_next_min = dt_ms / 60000.0
@@ -1055,7 +1046,6 @@ class FeatureEnginePD:
             oiCcy = float(oiCcy) if oiCcy is not None and pd.notna(oiCcy) else np.nan
             oiUsd = float(oiUsd) if oiUsd is not None and pd.notna(oiUsd) else np.nan
 
-            # 更新
             if pd.notna(oi):
                 ois.prev_oi = ois.oi if pd.notna(ois.oi) else None
                 ois.oi = oi
@@ -1077,7 +1067,7 @@ class FeatureEnginePD:
     def snapshot_feature(self, instId: str, tf: str, ts: int, do_round=True):
         state = self._get_state(instId, tf)
         shared = self._series.get((instId, self._shared_tf)) or self._get_shared_state(instId)
-        # 共享（与 tf 无关）的来源
+        
         src_micro   = shared.micro
         src_qi      = shared.qi
         src_cvd     = shared.cvd
@@ -1126,7 +1116,7 @@ class FeatureEnginePD:
             dstate = self._get_derived(instId, tf)
             if dstate.last_ts == ts and dstate.summary:
                 out_rows[0].update(dstate.summary)
-                dstate.dirty = False   # 被消费过了
+                dstate.dirty = False
 
         if not out_rows:
             return pd.DataFrame(columns=self.columns())

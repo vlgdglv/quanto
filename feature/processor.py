@@ -4,15 +4,11 @@ import asyncio
 import pandas as pd
 from typing import Dict, Any, Optional, Callable, Awaitable, Tuple
 
-from collections import defaultdict
 
-from infra.ws_client import WSClient
-from infra.publisher import FeatureBusPublisher
-from datafeed.handlers import channel_registry
-from datafeed.storage import CompositeStore
-from feature.integrate import SnapshotThrottler, build_snapshot_from_row
-
+from feature.handlers import channel_registry
+from feature.integrate import build_snapshot_from_row
 from utils.logger import logger
+
 
 class FeatureEngineProcessor:
     _tf_pat = re.compile(r"(?:candle)(\d+(?:m|H|D|M|Mutc|Wutc|Dutc|Hutc))")
@@ -27,9 +23,7 @@ class FeatureEngineProcessor:
 
         agent_cfg = ()
         agent_cfg = (cfg or {}).get("agent", {})
-        # min_int_ms = int(agent_cfg.get("min_snapshot_interval_ms", 300_000))
-        # align_5m   = bool(agent_cfg.get("align_to_5m", False))
-        # self.throttler = SnapshotThrottler(min_interval_ms=min_int_ms, align_to_5m=align_5m)
+
         self.on_snapshot = on_snapshot
         
         self.feature_writer = feature_writer
@@ -50,7 +44,6 @@ class FeatureEngineProcessor:
         self.publisher = publisher
         self.stream_name = stream_name
         
-
     async def handle(self, msg: Dict[str, Any]) -> None:
         arg = msg.get("arg", {})
         channel = arg.get("channel","")
@@ -72,10 +65,10 @@ class FeatureEngineProcessor:
         
         if may_return_feats:
             tf = self._extract_tf(channel) or "1m"
-            feats = getattr(self.engine, method_name)(df, instId=instId, tf=tf)
+            feats = await asyncio.to_thread(getattr(self.engine, method_name), df, instId, tf)
         else:
             tf = self._tick_tf
-            getattr(self.engine, method_name)(df, instId=instId, tf=tf)
+            await asyncio.to_thread(getattr(self.engine, method_name), df, instId, tf)
             feats = None
         
         if feats is None or feats.empty:
@@ -86,7 +79,6 @@ class FeatureEngineProcessor:
             return
 
         if self.on_rows_async:
-            # asyncio.create_task(self.on_rows_async(build_snapshot_from_row(rows)))
             for row in rows:
                 snap = build_snapshot_from_row(row)
                 self.on_snapshot(snap)
@@ -105,12 +97,6 @@ class FeatureEngineProcessor:
         return m.group(1) if m else None
     
     def _collect_bar_close_rows(self, feats: "pd.DataFrame", instId: str, tf: str) -> list[dict]:
-        """
-        仅做两件事：
-        1) 按 ts 升序，保证乱序到达时的正确发出顺序；
-        2) 以 (instId, tf) 维度做“单调递增去重”（ts <= last_ts 的丢弃）。
-        返回：应当产出的 DataFrame 行（dict 列表），供后续 build_snapshot_from_row 使用。
-        """
         if feats is None or feats.empty:
             return []
         key = (instId, tf)
@@ -122,13 +108,13 @@ class FeatureEngineProcessor:
             if last_ts is not None and ts <= last_ts:
                 continue
             out_rows.append(r.to_dict())
-            last_ts = ts  # 更新到最新已选择的 ts
+            last_ts = ts
 
         self._emit_last_ts[key] = last_ts
         return out_rows
     
     async def _publish_rows_async(self, rows: list[dict], instId: str, tf: str):
-        ts_now = int(asyncio.get_running_loop().time() * 1000)  # 近似
+        ts_now = int(asyncio.get_running_loop().time() * 1000)
         for snap in rows:
             payload = {
                 "kind": "FeaturesUpdated",

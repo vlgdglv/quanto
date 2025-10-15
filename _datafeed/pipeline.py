@@ -6,8 +6,7 @@ from typing import Dict, Any, List, Callable
 from collections import defaultdict
 
 from infra.ws_client import WSClient
-from datafeed.handlers import channel_registry
-from datafeed.storage import CompositeStore
+from feature.handlers import channel_registry
 from feature.integrate import SnapshotThrottler, build_snapshot_from_row
 
 from utils.logger import logger
@@ -19,7 +18,7 @@ class DataPipeline:
                  max_queue = 100_000):
         self.cfg = cfg
 
-        from datafeed.provider import build_ws_plan  # 新函数
+        from feature.provider import build_ws_plan  # 新函数
         plan = build_ws_plan(cfg)
 
         df_auth = cfg.get("datafeed", {})
@@ -44,6 +43,7 @@ class DataPipeline:
             )
         self.processor = processor
         self.q: asyncio.Queue[Dict] = asyncio.Queue(maxsize=max_queue)
+        self._lock = asyncio.Lock()
         
     async def on_json(self, msg: Dict[str, Any]):
         if "event" in msg:
@@ -80,7 +80,7 @@ class DataPipeline:
 
 
 class WriteProcessor:
-    def __init__(self, cfg: dict, store: CompositeStore):
+    def __init__(self, cfg: dict, store):
         self.store = store
         self._handlers = channel_registry
         self._flush_n = cfg["datafeed"]["flush_every_n"]

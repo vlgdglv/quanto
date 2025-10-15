@@ -1,6 +1,6 @@
 # apps/feature_feed.py
 import os, asyncio
-from infra.publisher import RedisStreamsPublisher
+from infra.redis_stream import RedisStreamsPublisher
 from feature.engine_pd import FeatureEnginePD
 from feature.processor import FeatureEngineProcessor
 from datafeed.pipeline import DataPipeline
