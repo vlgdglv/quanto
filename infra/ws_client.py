@@ -1,8 +1,9 @@
 # data/ws_public.py
 from utils.logger import logger
 import contextlib
-import asyncio, json, time, websockets
+import asyncio, json, time, websockets, random
 from typing import Dict, Any, Callable, Awaitable, Iterable, Optional, List
+from websockets.exceptions import InvalidStatus, ConnectionClosedError, ConnectionClosedOK
 
 Json = Dict[str, Any]
 
@@ -17,6 +18,8 @@ class WSClient:
         ping_interval: int = 20,
         reconnect_cap_s: int = 20,
         inst_name: str = "",
+        sub_batch_size: int | None = None, 
+        sub_gap_s: float = 0.05
     ):
         self.url = url
         self.args = list(subscribe_args)
@@ -37,6 +40,14 @@ class WSClient:
         self._mb_ms = 10
 
         self.inst_name = inst_name
+
+        self._err_last_sig: tuple[str, str] | None = None
+        self._err_last_ts: float = 0.0
+        self._err_count: int = 0
+        self._err_window_s: float = 60.0
+
+        self._sub_batch_size = sub_batch_size
+        self._sub_gap_s = sub_gap_s
 
         logger.info(f"WSClient {inst_name} init url={url} need_login={need_login} "
                     f"ping_interval={ping_interval}s reconnect_cap_s={reconnect_cap_s} "
@@ -95,6 +106,7 @@ class WSClient:
     async def _subscribe_args(self, args: List[dict]):
         if not args: return
         if not self._ws: return
+        self.args = args
         payload = {"op":"subscribe","args":args}
         logger.info(f"WS arg subscribe request {args}")
         await self._ws.send(json.dumps(payload))
@@ -102,6 +114,7 @@ class WSClient:
     async def _unsubscribe_args(self, args: List[dict]):
         if not args: return
         if not self._ws: return
+        self.args = args
         payload = {"op":"unsubscribe","args":args}
         logger.info(f"WS arg unsubscribe request {args}")
         await self._ws.send(json.dumps(payload))
@@ -109,7 +122,8 @@ class WSClient:
     async def _heartbeat(self):
         while not self._stop and self._ws:
             try:
-                await self._ws.ping()
+                # await self._ws.ping()
+                await self._ws.send("ping")
             except Exception:
                 return
             await asyncio.sleep(self.ping_interval)
@@ -119,6 +133,8 @@ class WSClient:
         while not self._stop:
             hb = None
             try:
+                await asyncio.sleep(random.uniform(0.0, 0.5))
+
                 logger.info(f"WS {self.inst_name} connect: connecting to {self.url} (retry={retry})")
                 async with websockets.connect(self.url, ping_interval=None, close_timeout=30) as ws:
                     self._ws = ws
@@ -134,15 +150,34 @@ class WSClient:
                         
                     # main read loop
                     async for msg in ws:
+                        if isinstance(msg, str):
+                            m = msg.strip().lower()
+                            if m == "ping":
+                                try:
+                                    await self._ws.send("pong")
+                                except Exception:
+                                    pass
+                                continue
+                            if m == "pong":
+                                continue
+                        
                         try:
                             data = json.loads(msg)
                         except Exception:
                             continue
-
-                        if "event" in data:
-                            logger.info(f"WS event: {data.get('event')}: {data}")
+                        
+                        if isinstance(data, dict) and data.get("op") == "ping":
+                            with contextlib.suppress(Exception):
+                                await self._ws.send('{"op":"pong"}')
                             continue
                         
+                        if "event" in data:
+                            if data.get("event") == "error":
+                                logger.error(f"WS event ERROR: {data}")
+                            else:
+                                logger.info(f"WS event: {data.get('event')}: {data}")
+                            continue
+
                         if self._microbatch:
                             batch.append(data)
                             now = asyncio.get_running_loop().time()
@@ -152,6 +187,21 @@ class WSClient:
                             await self._q_put(data)
             except asyncio.CancelledError:
                 raise
+            except InvalidStatus as e:
+                code = getattr(e, "status_code", None) or getattr(e, "status", None)
+                logger.warning(f"WS {self.inst_name} handshake rejected: HTTP {code}")
+                backoff = min(self.reconnect_cap_s, 2 ** min(retry, 6))
+                if code == 503:
+                    backoff = max(backoff, 3.0)
+                backoff *= random.uniform(0.8, 1.3)
+                await asyncio.sleep(backoff)
+                retry += 1
+            except (ConnectionClosedError, ConnectionClosedOK, ConnectionResetError, TimeoutError) as e:
+                logger.warning(f"WS {self.inst_name} connection closed: {type(e).__name__} ({e})")
+                backoff = min(self.reconnect_cap_s, 2 ** min(retry, 6))
+                backoff *= random.uniform(0.8, 1.3)
+                await asyncio.sleep(backoff)
+                retry += 1
             except Exception as e:
                 logger.exception(f"WS {self.inst_name} loop: exception")
                 backoff = min(self.reconnect_cap_s, 2 ** min(retry, 6))

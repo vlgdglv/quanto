@@ -19,11 +19,13 @@ class InstrumentWorker:
                  inst: str, 
                  cfg: Dict[str, Any], 
                  redis_dsn: str, 
-                 stream_name: str = "features"
+                 stream_name: str = None
                  ):
         self.inst = inst
         self.cfg = cfg
         self._q: asyncio.Queue = asyncio.Queue(maxsize=cfg.get("runtime", {}).get("queue_max", 8192 * 4))
+        
+        stream_name = stream_name if stream_name else inst
 
         engine = FeatureEnginePD(enable_summary=True)
         pub = RedisStreamsPublisher(dsn=redis_dsn, stream=stream_name)
@@ -96,14 +98,14 @@ class InstrumentWorker:
         """
         # 1) 合成一个“更新后”的临时 cfg
         merged = json.loads(json.dumps(self.cfg))
-        print("In inst worker new_cfg_fragment: ", new_cfg_fragment)
+        # print("In inst worker new_cfg_fragment: ", new_cfg_fragment)
         if "datafeed" in new_cfg_fragment:
             merged["datafeed"] = {**self.cfg.get("datafeed", {}), **new_cfg_fragment["datafeed"]}
 
-        print("In inst worker merged: ", merged)
+        # print("In inst worker merged: ", merged)
         # 2) 重新计算该 inst 的目标 args
         target = build_args_for_one_inst_grouped_by_kind(merged, self.inst)  # ws_kind -> args[]
-        print("In inst worker target: ", target)
+        # print("In inst worker target: ", target)
         
         all_ws_kind = set(target.keys()) | set(self._desired.keys()) 
         # 3) 对每个 ws_kind 做增删差量

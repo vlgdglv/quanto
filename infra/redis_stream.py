@@ -17,6 +17,7 @@ class RedisStreamsPublisher:
         self._maxlen = maxlen_approx
         self._redis: Optional[aioredis.Redis] = None
         self._lock = asyncio.Lock()
+        logger.info(f"Redis stream {self._stream} initialized.")
 
     async def _conn(self):
         if self._redis is None:
@@ -90,7 +91,6 @@ class RedisStreamsSubscriber:
                         self._last_id = entry_id
                         continue
                     try:
-                        print(raw)
                         payload = json.loads(raw)
                     except Exception:
                         logger.warning(f"[subscriber] json decode error id={entry_id!r}")

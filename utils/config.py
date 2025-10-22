@@ -6,10 +6,15 @@ from dotenv import load_dotenv
 
 from utils.logger import logger
 
-def load_cfg():
-    load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
+def load_cfg(cfg_path: str | None = None):
+    
+    base_dir = Path(__file__).resolve().parents[1]
 
-    with open(Path(__file__).resolve().parents[1] / "config.yaml", "r", encoding="utf-8") as f:
+    cfg_file = Path(cfg_path) if cfg_path else (base_dir / "config.yaml")
+
+    load_dotenv(base_dir / ".env")
+
+    with open(cfg_file, "r", encoding="utf-8") as f:
         raw_cfg = yaml.safe_load(f)
 
     def resolve_env(obj):

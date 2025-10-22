@@ -2,8 +2,8 @@ from typing import Dict, Any, Optional, Callable, List
 from pydantic import BaseModel, Field
 from enum import Enum
 import json
-from agent.chat_models import ChatModelLike
-from agent.schema import (ActionProposal, Direction, DDSOut, EPMOut, RRFOut, SignalScores)
+from agent_legacy.chat_models import ChatModelLike
+from agent_legacy.schema import (ActionProposal, Direction, DDSOut, EPMOut, RRFOut, SignalScores)
 
 def parse_json(content: str) -> Dict[str, Any]:
     import json, re

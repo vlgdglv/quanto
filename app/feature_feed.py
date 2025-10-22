@@ -3,7 +3,7 @@ import os, asyncio
 from infra.redis_stream import RedisStreamsPublisher
 from feature.engine_pd import FeatureEnginePD
 from feature.processor import FeatureEngineProcessor
-from datafeed.pipeline import DataPipeline
+from _datafeed.pipeline import DataPipeline
 from utils.config import load_cfg
 from utils.logger import logger
 

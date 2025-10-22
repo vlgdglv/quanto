@@ -1,6 +1,6 @@
 import time
 from typing import Dict, Any
-from agent.orchestrator import Orchestrator, ActionProposal, ChatModelLike
+from agent_legacy.orchestrator import Orchestrator, ActionProposal, ChatModelLike
 
 class LCChatModelAdapter(ChatModelLike):
     def __init__(self, lc_chat_model):

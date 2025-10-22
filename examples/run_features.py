@@ -1,7 +1,7 @@
 # examples/run_features.py
 import asyncio, yaml
 from pathlib import Path
-from datafeed.pipeline import DataPipeline
+from _datafeed.pipeline import DataPipeline
 from feature.processor import FeatureEngineProcessor
 from feature.engine_pd import FeatureEnginePD
 from feature.writer import FeatureWriter

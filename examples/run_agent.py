@@ -8,10 +8,10 @@ import asyncio, yaml
 from pathlib import Path
 from typing import Dict, Any
 
-from agent.agent_house import Agent
-from agent.chat_models import llm_factory
-from agent.schema import ActionProposal
-from agent.bb_agents import LLMDecider, Decision
+from agent_legacy.agent_house import Agent
+from agent_legacy.chat_models import llm_factory
+from agent_legacy.schema import ActionProposal
+from agent_legacy.bb_agents import LLMDecider, Decision
 
 from feature.engine_pd import FeatureEnginePD
 from feature.processor import FeatureEngineProcessor
@@ -22,7 +22,7 @@ from utils.config import load_cfg
 from feature.writer import FeatureWriter
 from feature.sinks import CSVFeatureSink
 # examples/run_agent.py （只展示新增/修改段）
-from agent.interaction_writer import InteractionWriter
+from agent_legacy.interaction_writer import InteractionWriter
 
 from pathlib import Path
 

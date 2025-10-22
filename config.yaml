@@ -13,14 +13,14 @@ okx:
       private:  wss://wseeapap.okx.com:8443/ws/v5/private
 
 datafeed:
-  instIds: ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "DOGE-USDT-SWAP", ] #"DOGE-USDT-SWAP",
+  instIds: ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "DOGE-USDT-SWAP",] #"DOGE-USDT-SWAP",
   mode: live
   
   channels:
     candles:
       fetch: true
       kind: "trade"
-      bars: ["1m","15m","30m","1H"]
+      bars: ["15m","30m","1H","4H"]
     trades:
       fetch: true
     books:

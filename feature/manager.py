@@ -25,6 +25,7 @@ class WorkerManager:
             insts = list(self.workers.keys())
         for inst in insts:
             await self.remove_instrument(inst)
+            await asyncio.sleep(0.1)
 
     async def add_instrument(self, inst: str):
         async with self._lock:

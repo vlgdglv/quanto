@@ -2,7 +2,7 @@
 import json, time, asyncio
 from typing import Dict, Optional, Any
 from pydantic import ValidationError
-from agent.schema import ActionProposal
+from agent_legacy.schema import ActionProposal
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.output_parsers import PydanticOutputParser
@@ -10,7 +10,7 @@ from utils.logger import logger
 from openai import RateLimitError, APIConnectionError, APITimeoutError, APIStatusError
 import tiktoken
 from pathlib import Path
-from agent.interaction_writer import InteractionWriter
+from agent_legacy.interaction_writer import InteractionWriter
 
 
 enc = tiktoken.encoding_for_model("gpt-4o-mini")
