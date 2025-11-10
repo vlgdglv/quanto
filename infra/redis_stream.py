@@ -100,6 +100,8 @@ class RedisStreamsSubscriber:
                     # 轻并发：并发执行回调，避免慢处理阻塞拉取
                     await self._sem.acquire()
                     asyncio.create_task(self._run_cb(on_message, payload, entry_id))
+                    self._last_id = entry_id
+                    
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -112,7 +114,6 @@ class RedisStreamsSubscriber:
         except Exception as e:
             logger.warning(f"[subscriber] callback error for id={entry_id!r}: {repr(e)}")
         finally:
-            self._last_id = entry_id
             self._sem.release()
 
     async def stop(self):

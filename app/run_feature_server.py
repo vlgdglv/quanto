@@ -17,13 +17,14 @@ def build_parser():
     p.add_argument("--host",      default=env_default("CONTROL_HOST", None))
     p.add_argument("--port",      type=int, default=int(env_default("CONTROL_PORT", "0") or 0))
     p.add_argument("--token",     default=env_default("CONTROL_TOKEN", None))
+    p.add_argument("--config-path", default="configs/okx_feature_config.yaml")
     return p
 
 async def main():
-    cfg = load_cfg()
-
     args = build_parser().parse_args()
-
+    
+    cfg = load_cfg(args.config_path)
+    
     redis_dsn = args.redis_dsn
     stream = args.stream or cfg.get("redis", {}).get("stream", None)
 

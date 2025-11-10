@@ -9,7 +9,7 @@ import json
 from infra.redis_stream import RedisStreamsSubscriber  # ← 用刚才的订阅器
 
 REDIS_DSN   = os.getenv("REDIS_DSN",   "redis://:12345678@127.0.0.1:6379/0")
-STREAM_NAME = os.getenv("REDIS_STREAM","features")
+STREAM_NAME = os.getenv("REDIS_STREAM","BTC-USDT-SWAP")
 START_POS   = os.getenv("START", "now")
 CONCURRENCY = int(os.getenv("CONCURRENCY", "1"))
 
@@ -32,8 +32,8 @@ async def on_message(payload: dict):
     print("\n=== Feature Snapshot ===")
     print("[meta]")
     print(_pretty(meta))
-    print("[features]")
-    print(features)
+    # print("[features]")
+    # print(features)
 
 async def main():
     sub = RedisStreamsSubscriber(

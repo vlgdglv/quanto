@@ -6,8 +6,7 @@ from decimal import Decimal, getcontext, ROUND_DOWN, ROUND_HALF_UP
 from trading.models import Instrument
 from trading.errors import PrecisionError
 
-# 提高一点全局精度，避免大数/超细分 tick 的累积误差
-getcontext().prec = 28
+# getcontext().prec = 28
 
 def _D(x: Any) -> Decimal:
     """Safe Decimal from str/float/int; prefer str to keep exact tick like '0.0005'."""

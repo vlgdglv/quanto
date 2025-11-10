@@ -41,10 +41,7 @@ class WSClient:
 
         self.inst_name = inst_name
 
-        self._err_last_sig: tuple[str, str] | None = None
-        self._err_last_ts: float = 0.0
-        self._err_count: int = 0
-        self._err_window_s: float = 60.0
+        self._last_rx: float = 0.0
 
         self._sub_batch_size = sub_batch_size
         self._sub_gap_s = sub_gap_s
@@ -120,6 +117,7 @@ class WSClient:
         await self._ws.send(json.dumps(payload))
 
     async def _heartbeat(self):
+        loop = asyncio.get_running_loop()
         while not self._stop and self._ws:
             try:
                 # await self._ws.ping()
@@ -139,6 +137,8 @@ class WSClient:
                 async with websockets.connect(self.url, ping_interval=None, close_timeout=30) as ws:
                     self._ws = ws
                     logger.info(f"WS {self.inst_name} connect: connected")
+                    loop = asyncio.get_running_loop()
+                    self._last_rx = loop.time()
                     if self.need_login:
                         await self._login()
                     await self._subscribe()
@@ -150,8 +150,11 @@ class WSClient:
                         
                     # main read loop
                     async for msg in ws:
+                        self._last_rx = loop.time()
+                        
                         if isinstance(msg, str):
                             m = msg.strip().lower()
+                            logger.debug(f"WS {self.inst_name} recv: {msg} in str")
                             if m == "ping":
                                 try:
                                     await self._ws.send("pong")
@@ -167,13 +170,18 @@ class WSClient:
                             continue
                         
                         if isinstance(data, dict) and data.get("op") == "ping":
+                            logger.debug(f"WS {self.inst_name} recv: {msg} in dict")
                             with contextlib.suppress(Exception):
                                 await self._ws.send('{"op":"pong"}')
                             continue
                         
+                        
                         if "event" in data:
-                            if data.get("event") == "error":
+                            ev = data.get("event")
+                            if ev == "error":
                                 logger.error(f"WS event ERROR: {data}")
+                            elif ev == "notice":
+                                logger.info(f"WS event NOTICE: {data}")
                             else:
                                 logger.info(f"WS event: {data.get('event')}: {data}")
                             continue
@@ -185,6 +193,7 @@ class WSClient:
                                 await self._q_put(batch); batch=[]; last=now
                         else:
                             await self._q_put(data)
+                            
             except asyncio.CancelledError:
                 raise
             except InvalidStatus as e:
@@ -213,8 +222,9 @@ class WSClient:
                     with contextlib.suppress(asyncio.CancelledError):
                         await hb
                 try:
-                    if self._ws:
-                        await self._ws.close()  
+                    with contextlib.suppress(Exception):
+                        if self._ws:
+                            await self._ws.close()  
                 except Exception:
                     pass
                 finally:
@@ -233,7 +243,17 @@ class WSClient:
             if self._drop_when_full:
                 logger.warning(f"WS inst {self.inst_name} queue full/timeout ({exc_type}), drop 1 msg")
             else:
-                await self._q.put(item) 
+                await self._q.put(item)
+    
+    async def force_reconnect(self, reason: str = "scheduled_reconnect"):
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            await ws.close(code=1001, reason=reason)  # 1001: going away
+        except Exception:
+            pass
+        logger.info(f"WS {self.inst_name} force_reconnect: {reason}")
                 
     async def stop(self):
         self._stop = True   

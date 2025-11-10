@@ -1,6 +1,7 @@
 # trading/models.py
 from dataclasses import dataclass
-from typing import Optional, Dict
+from typing import Optional, Literal, Dict, Any, Callable, Awaitable, List
+from enum import Enum
 from trading.enums import PosSide, Side, TdMode, OrdType, TimeInForce, OrderStatus
 from decimal import Decimal
 
@@ -11,36 +12,6 @@ class Instrument:
     lotSz: Decimal
     minSz: Decimal
     ctVal: Decimal
-    # ts: int
-
-@dataclass
-class OrderRequest:
-    instId: str
-    side: Side
-    tdMode: TdMode
-    posSide: Optional[str]              # "net" | "long" | "short"
-    ordType: OrdType
-    sz: float
-    px: Optional[float] = None
-    tif: Optional[TimeInForce] = None
-    reduceOnly: bool = False
-    clOrdId: Optional[str] = None
-    expTime: Optional[int] = None
-    attach_tp_px: Optional[float] = None
-    attach_sl_px: Optional[float] = None
-    tags: Optional[Dict[str, str]] = None
-
-@dataclass
-class Order:
-    clOrdId: str
-    ordId: Optional[str]
-    req: OrderRequest
-    status: OrderStatus
-    filledSz: float = 0.0
-    avgPx: Optional[float] = None
-    createTs: int = 0
-    updateTs: int = 0
-    raw: Optional[dict] = None
 
 @dataclass
 class Fill:
@@ -86,12 +57,14 @@ class Position:
     cTime: Optional[int]    # 创建时间(ms)
     uTime: Optional[int]    # 最近更新时间(ms)
 
+
 @dataclass
 class Balance:
-    ccy: str
-    equity: float
-    availEq: float
-    ts: int
+    ccy: str                  # 币种
+    equity: float             # details.eq: 总权益/总余额
+    avail: float              # 优先 details.availBal；若为空用 details.availEq
+    frozen: float             # details.frozenBal（若无可用 0）
+    ts: int        
 
 
 @dataclass
@@ -100,3 +73,36 @@ class ModeTarget:
     posMode: Optional[str] = None         # "net_mode" / "long_short_mode"
     mgnMode: Optional[str] = None         # "cross" / "isolated"
     leverage: Optional[float] = None      # 目标杠杆（合约层面可能需 per instId 设置）
+
+
+class OrdState(str, Enum):
+    NEW="new"
+    LIVE="live"
+    PARTIALLY_FILLED="partially_filled"
+    FILLED="filled"
+    CANCELED="canceled"
+    FAILED="failed"
+
+
+@dataclass
+class OrderCmd:
+    instId: str
+    side: Literal["buy","sell"]
+    ordType: Literal["limit","market","post_only","ioc","fok","optimal_limit_ioc"]
+    tdMode: Literal["isolated","cross"] = "cross"
+    posSide: Optional[Literal["net","long","short"]] = "net"
+    sz: str = ""
+    px: Optional[str] = None
+    reduceOnly: Optional[bool] = None
+    tag: Optional[str] = None
+    clOrdId: Optional[str] = None
+    expTime: Optional[int] = None
+
+
+@dataclass
+class OrderAck:
+    instId: str
+    clOrdId: str
+    ordId: Optional[str]
+    accepted: bool
+    msg: Optional[str] = None

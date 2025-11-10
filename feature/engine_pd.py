@@ -885,7 +885,7 @@ class FeatureEnginePD:
             cvd_update(state.cvd, delta)
             vpin_update(state.vpin, delta)
             if state.last_mid is not None:
-                kyle_lambda_update(state.kyle, state.last_mid, delta)
+                    (state.kyle, state.last_mid, delta)
             self.updates += 1
 
     # ----------- candles -> features -----------

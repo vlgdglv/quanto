@@ -1,6 +1,8 @@
 # 
 import asyncio, contextlib, json
 from typing import Dict, Any, List, Tuple
+import datetime, random, hashlib
+from zoneinfo import ZoneInfo
 
 from infra.ws_client import WSClient
 from infra.redis_stream import RedisStreamsPublisher
@@ -15,6 +17,8 @@ class InstrumentWorker:
     一个 inst 至多维护 2 条 WS（public/business），共享一个内部队列与一个 Processor。
     支持：启动时从 cfg 构建订阅；运行时 apply_delta 动态增删（频道/TF）。
     """
+    _tz = ZoneInfo("Asia/Shanghai")
+
     def __init__(self, 
                  inst: str, 
                  cfg: Dict[str, Any], 
@@ -23,7 +27,7 @@ class InstrumentWorker:
                  ):
         self.inst = inst
         self.cfg = cfg
-        self._q: asyncio.Queue = asyncio.Queue(maxsize=cfg.get("runtime", {}).get("queue_max", 8192 * 4))
+        self._q: asyncio.Queue = asyncio.Queue(maxsize=cfg.get("runtime", {}).get("queue_max", 8192 * 8))
         
         stream_name = stream_name if stream_name else inst
 
@@ -37,6 +41,8 @@ class InstrumentWorker:
 
         # ws_kind -> set of arg tuple
         self._desired: Dict[str, set] = {"public": set(), "business": set()}
+    
+        
 
     def _url_for_kind(self, ws_kind: str) -> str:
         from feature.provider import build_ws_url
@@ -71,7 +77,14 @@ class InstrumentWorker:
             self.clients[ws_kind] = c
             self._desired[ws_kind] = { (a["channel"], a["instId"]) for a in args }
             self._tasks.append(asyncio.create_task(c.run_forever()))
-            
+        
+        self._tasks.append(asyncio.create_task(
+            self._scheduled_reconnect(
+                hours=set([0, 4, 8, 12, 15, 16, 20]),
+                minutes_before=5,
+                jitter_each=0.6,
+            )
+        ))
         self._tasks.append(asyncio.create_task(self._consume_loop()))
 
     async def stop(self):
@@ -146,3 +159,37 @@ class InstrumentWorker:
 
         # 6) 更新保存 cfg
         self.cfg = merged
+    
+    async def _scheduled_reconnect(
+        self, *, hours: set[int], minutes_before: int = 5, jitter_each: float = 0.4
+    ):
+        assert all(0 <= h <= 23 for h in hours)
+        
+        inst_spread = int.from_bytes(hashlib.md5(str(self.inst).encode('utf-8')).digest()[:4], 'big') % max(1, 30)
+        while True:
+            now = datetime.datetime.now(tz=self._tz)
+            candidates = []
+            for d in (0, 1):
+                day = (now + datetime.timedelta(days=d)).date()
+                for h in sorted(hours):
+                    tgt = datetime.datetime(day.year, day.month, day.day, h, 0, 0, tzinfo=self._tz)
+                    fire = tgt - datetime.timedelta(minutes=minutes_before, seconds=inst_spread)
+                    if fire > now:
+                        candidates.append(fire)
+            next_fire = min(candidates)
+            await asyncio.sleep((next_fire - now).total_seconds())
+
+            await self._reconnect_all(
+                reason=f"pre_{next_fire.astimezone(self._tz).strftime('%H%M')}",
+                jitter_each=jitter_each
+            )
+
+            await asyncio.sleep(inst_spread + 2)
+
+    async def _reconnect_all(self, *, reason: str = "scheduled", jitter_each: float = 0.4):
+        for i, (ws_kind, client) in enumerate(self.clients.items()):
+            await asyncio.sleep(random.uniform(0, jitter_each) + i * 0.05)
+            try:
+                await client.force_reconnect(reason=reason)
+            except Exception:
+                pass

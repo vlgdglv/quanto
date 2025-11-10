@@ -1,6 +1,7 @@
 # infra/http_client.py
 from __future__ import annotations
 
+import os
 import aiohttp
 import asyncio
 import base64
@@ -10,9 +11,10 @@ import hmac
 import json
 import random
 import time
-import logging
 from typing import Any, AsyncGenerator, Dict, Iterable, Mapping, Optional, Tuple
 from urllib.parse import urlencode
+import logging
+from utils.logger import logger
 
 JSON_SEPARATORS = (",", ":")
 
@@ -56,18 +58,6 @@ def _mask(s: Optional[str]) -> str:
     return s[:4] + "*" * (len(s) - 8) + s[-4:]
 
 class HttpClient:
-    """
-    通用 OKX REST 客户端（异步）。
-    - 支持 LIVE/PAPER 环境切换（通过 config 决定 base_url 与 x-simulated-trading 头）
-    - 私有接口签名: OK-ACCESS-SIGN = Base64(HMAC_SHA256(timestamp+method+requestPath+body))
-      * requestPath 必须包含完整 path + querystring（若有）。
-      * body 为请求体 JSON 字符串（GET 通常为空串）。参见官方签名说明。
-    - OK-ACCESS-TIMESTAMP 使用 UTC ISO 毫秒格式；请求 30 秒内有效。
-      建议在启动时调用服务器时间对齐 /api/v5/public/time，并维护 clock_offset_ms。
-    - 内置指数退避重试（网络/HTTP 5xx/限频码）；业务错误（参数无效等）不重试。
-    - 提供通用分页迭代器用于 backfill（before/after 或 begin/end 语义）。
-    """
-
     def __init__(self,
                  cfg: Mapping[str, Any],
                  logger: Optional[logging.Logger] = None,
@@ -88,9 +78,9 @@ class HttpClient:
 
         # credentials
         auth_cfg = cfg.get("auth", {})
-        self.api_key = auth_cfg.get("api_key")
-        self.secret_key = auth_cfg.get("secret_key")
-        self.passphrase = auth_cfg.get("passphrase")
+        self.api_key = os.getenv("OKX_API_KEY")
+        self.secret_key = os.getenv("OKX_SECRET_KEY")
+        self.passphrase =  os.getenv("OKX_PASSPHRASE")
 
         # headers / paper
         self.demo_header_enabled: bool = bool(cfg.get("trading", {}).get("simulated_header", self.env == "paper"))
@@ -267,8 +257,11 @@ class HttpClient:
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 if retry and attempt < self.max_attempts:
                     await self._sleep_backoff(attempt)
+                    logger.warning(f"Network error: {e}, retrying...")
                     continue
                 raise HttpError(599, f"Network error: {e}") from e
+            except Exception as e:
+                raise HttpError(599, f"Unexpected error: {e}") from e
             
     async def _sleep_backoff(self, attempt: int) -> None:
         base = self.backoff_ms * (2 ** (attempt - 1))
@@ -364,17 +357,17 @@ class HttpClient:
                 break
     
     # ---- 常用封装 ---------------------------------------------------------
-    async def get_instruments(self, inst_type: str = "SWAP") -> Dict[str, Any]:
-        """GET /public/instruments"""
-        return await self.get_public("/api/v5/public/instruments", params={"instType": inst_type})
+    # async def get_instruments(self, inst_type: str = "SWAP") -> Dict[str, Any]:
+    #     """GET /public/instruments"""
+    #     return await self.get_public("/api/v5/public/instruments", params={"instType": inst_type})
 
-    async def place_order(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        """POST /trade/order（演示：保留到 ExecutionService 里更合理，这里仅做直通）"""
-        return await self.post_private("/api/v5/trade/order", json_body=payload)
+    # async def place_order(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    #     """POST /trade/order（演示：保留到 ExecutionService 里更合理，这里仅做直通）"""
+    #     return await self.post_private("/api/v5/trade/order", json_body=payload)
 
-    async def get_order(self, inst_id: str, cl_ord_id: str) -> Dict[str, Any]:
-        """GET /trade/order（按 clOrdId 查询）"""
-        return await self.get_private(
-            "/api/v5/trade/order",
-            params={"instId": inst_id, "clOrdId": cl_ord_id},
-        )
+    # async def get_order(self, inst_id: str, cl_ord_id: str) -> Dict[str, Any]:
+    #     """GET /trade/order（按 clOrdId 查询）"""
+    #     return await self.get_private(
+    #         "/api/v5/trade/order",
+    #         params={"instId": inst_id, "clOrdId": cl_ord_id},
+    #     )

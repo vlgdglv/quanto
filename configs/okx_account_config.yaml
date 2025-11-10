@@ -1,0 +1,32 @@
+okx:
+  rest_base:
+    live:  https://www.okx.com
+    paper: https://eea.okx.com
+  ws:
+    live:
+      public:   wss://ws.okx.com:8443/ws/v5/public
+      private:  wss://ws.okx.com:8443/ws/v5/private
+      business: wss://ws.okx.com:8443/ws/v5/business
+    paper:
+      business: wss://wspap.okx.com:8443/ws/v5/business
+      public:   wss://wspap.okx.com:8443/ws/v5/public
+      private:  wss://wseeapap.okx.com:8443/ws/v5/private
+      
+trading:
+  env: LIVE                # PAPER / LIVE
+  simulated_header: true
+  instType: SWAP
+  leverage: 5
+  posMode: net              # net / long_short
+  tdMode: cross             # cross / isolated
+  slippage_bps: 10
+  reconcile:
+    poll_ms: 600
+    timeout_ms: 5000
+  ws:
+    reconnect_backoff_ms: [500, 1000, 2000, 5000]
+  timeouts:
+    rest_ms: 3000
+  retries:
+    rest_max_attempts: 3
+    backoff_ms: 200

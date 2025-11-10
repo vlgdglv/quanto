@@ -45,3 +45,7 @@ propcache==0.3.2
 requests-toolbelt==1.0.0
 pytest==8.4.1
 pytest-asyncio==1.1.0
+
+uvicorn
+redis
+fastapi

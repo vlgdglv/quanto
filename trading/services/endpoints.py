@@ -21,6 +21,7 @@ class Endpoints:
     trade_orders_pending: str = "/api/v5/trade/orders-pending"
     trade_fills_history: str = "/api/v5/trade/fills-history"
     account_positions: str = "/api/v5/account/positions"
+    account_balance: str = "/api/v5/account/balance"
 
 
 # trading/services/endpoints.py (续)

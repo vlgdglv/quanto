@@ -9,11 +9,17 @@ from trading.services.account_service import AccountService
 from trading.services.endpoints import make_endpoints_from_cfg
 from utils import logger, load_cfg
 
+import os
+from dotenv import load_dotenv
 
+load_dotenv(os.path.expanduser("~/.okx/.env"))
+OKX_API_KEY = os.getenv("OKX_API_KEY")
+OKX_SECRET = os.getenv("OKX_SECRET_KEY")
+OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
 
 async def test_instruments():
-    cfg = load_cfg()
-    endpoints = make_endpoints_from_cfg(load_cfg())
+    cfg = load_cfg("configs/okx_trading_config.yaml")
+    endpoints = make_endpoints_from_cfg(cfg)
     container = await HttpContainer.start(cfg, logger, time_sync_interval_sec=600)
 
     http = container.http
@@ -76,16 +82,24 @@ async def test_instruments():
 
 
 async def test_accounts():
-    cfg = load_cfg()    
-    endpoints = make_endpoints_from_cfg(load_cfg())
+    cfg = load_cfg("configs/okx_trading_config.yaml")
+    endpoints = make_endpoints_from_cfg(cfg)
     container = await HttpContainer.start(cfg, logger, time_sync_interval_sec=600)
-    print(cfg["auth"]["api_key"])
+
     http = container.http
     svc = AccountService(http, endpoints)
     # Test SPOT
     try:
-        position = await svc.get_positions()
+        print("Test get_positions()")
+        position = await svc.get_positions(instId="DOGE-USDT-SWAP")
         print(position)
+        
+        print("Test get_balance()")
+        balance = await svc.get_balance(ccy="USDT")
+        print(balance)
+        # print("Test get_orders()")
+        # order = await svc.get_orders(instId="DOGE-USDT-SWAP")
+        # print(order)
     finally:
         await container.stop()
 
