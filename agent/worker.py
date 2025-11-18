@@ -1,5 +1,5 @@
 # instrument_worker.py
-import asyncio
+import asyncio, time
 from datetime import datetime
 
 from collections import deque
@@ -100,7 +100,9 @@ class InstrumentWorker:
                             last_ts["4H"] = ts4
                             cur = self.shared.get_rd()
                             if cur:
-                                await self.emit_signal(self.inst, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                await self.emit_signal(self.inst, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                                                    #    time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(snap4h.ts_close/1000)),
+                                                    snap4h.ts_close,
                                                     {"type": "RDState-4H", "value": cur})
                         except Exception as e:
                             logger.exception(f"[RD LOOP] regime agent failed for {self.inst}: {e}")
@@ -121,6 +123,8 @@ class InstrumentWorker:
                             cur = self.shared.get_rd()
                             if cur:
                                 await self.emit_signal(self.inst, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                                    #    time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(snap1h.ts_close/1000)),
+                                                    snap1h.ts_close,
                                                     {"type": "RDState-1H", "value": cur})
                         except Exception as e:
                             logger.exception(f"[RD LOOP] direction agent failed for {self.inst}: {e}")
@@ -169,7 +173,9 @@ class InstrumentWorker:
                     timing = await run_position_timing_agent(self.inst, rd, snap15, None, position)
                     timing_type = "PositionTiming"
 
-                await self.emit_intent(self.inst, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),{"type": timing_type, "value": timing.model_dump()})
+                await self.emit_intent(self.inst, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                       f15.ts_close,
+                                       {"type": timing_type, "value": timing.model_dump()})
             except Exception as e:
                 logger.exception(f"[Timing LOOP] rd_agent step failed for {self.inst}: {e}")
 

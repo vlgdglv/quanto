@@ -23,13 +23,26 @@ class HttpError(Exception):
         super().__init__(f"HTTP {status}: {message}")
         self.status = status
         self.payload = payload or {}
-
+    
+        
 class OkxApiError(Exception):
-    def __init__(self, code: str, msg: str, payload: Optional[dict] = None):
-        super().__init__(f"OKX API code={code}, msg={msg}")
+    def __init__(self, code: str, msg: str, payload: dict | None = None):
         self.code = code
         self.msg = msg
-        self.payload = payload
+        self.payload = payload or {}
+        super().__init__(self._build_message())
+
+    def _build_message(self) -> str:
+        base = f"OKX API code={self.code}, msg={self.msg}"
+        data = (self.payload.get("data") or [])
+        if data:
+            d0 = data[0] or {}
+            s_code = d0.get("sCode")
+            s_msg = d0.get("sMsg")
+            if s_code or s_msg:
+                base += f", sCode={s_code}, sMsg={s_msg}"
+        return base
+
 
 def _now_utc_iso_millis(ts_ms: Optional[int] = None) -> str:
     """
@@ -61,6 +74,9 @@ class HttpClient:
     def __init__(self,
                  cfg: Mapping[str, Any],
                  logger: Optional[logging.Logger] = None,
+                 api_key: Optional[str] = None,
+                 secret_key: Optional[str] = None,
+                 passphrase: Optional[str] = None,
                  *,
                  timeout_ms: Optional[int] = None,
                  session: Optional[aiohttp.ClientSession] = None,
@@ -72,15 +88,14 @@ class HttpClient:
 
         oxk_cfg = cfg.get("okx", {})
         trading_cfg = cfg.get("trading", "PAPER")
-        self.env = trading_cfg["env"]
+        self.env = trading_cfg["mode"]
 
         self.base_url = oxk_cfg["rest_base"].get(self.env, "https://www.okx.com").rstrip("/")
 
         # credentials
-        auth_cfg = cfg.get("auth", {})
-        self.api_key = os.getenv("OKX_API_KEY")
-        self.secret_key = os.getenv("OKX_SECRET_KEY")
-        self.passphrase =  os.getenv("OKX_PASSPHRASE")
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.passphrase =  passphrase
 
         # headers / paper
         self.demo_header_enabled: bool = bool(cfg.get("trading", {}).get("simulated_header", self.env == "paper"))
@@ -101,10 +116,7 @@ class HttpClient:
             self.session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False, trust_env=True)
 
         self.log.debug(
-            "HttpClient init base_url=%s env=%s key=%s",
-            self.base_url,
-            self.env,
-            _mask(self.api_key),
+            f"HttpClient init base_url={self.base_url} env={self.env} key={_mask(self.api_key)}"
         )
 
     # ---- async context manager ----------------------------------------------------
@@ -173,7 +185,7 @@ class HttpClient:
             "Accept": "application/json",
         }
 
-        if self.demo_header_enabled and self.env == "PAPER":
+        if self.demo_header_enabled and self.env == "paper":
             headers["x-simulated-trading"] = "1"
 
         return headers
@@ -230,7 +242,6 @@ class HttpClient:
                 ) as resp:
                     text = await resp.text()
                     status = resp.status
-                
                     if status >= 400:
                         if retry and (status >= 500 or status == 429) and attempt < self.max_attempts:
                             await self._sleep_backoff(attempt)
@@ -260,6 +271,10 @@ class HttpClient:
                     logger.warning(f"Network error: {e}, retrying...")
                     continue
                 raise HttpError(599, f"Network error: {e}") from e
+            except OkxApiError:
+                raise
+            except HttpError:
+                raise
             except Exception as e:
                 raise HttpError(599, f"Unexpected error: {e}") from e
             

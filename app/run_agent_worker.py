@@ -64,13 +64,13 @@ async def _append_csv_row(base_dir: str | Path, emit_time: str, tf: str, inst: s
                 w.writerow(["ts", "tf", "inst", "content"])
             w.writerow(row)
 
-async def emit_signal(inst: str, emit_time, obj, base_dir: str | Path = AGENT_BASE_DIR):
-    print(f"{_BRIGHT_BLUE}[signal][{inst}][{emit_time}] {obj}{_RESET}")
+async def emit_signal(inst: str, emit_time, frame_time,  obj, base_dir: str | Path = AGENT_BASE_DIR):
+    print(f"{_BRIGHT_BLUE}[signal][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {obj}{_RESET}")
     await _append_csv_row(base_dir, emit_time, "rd", inst, obj)
 
-async def emit_intent(inst: str, emit_time, intent, base_dir: str | Path = AGENT_BASE_DIR):
+async def emit_intent(inst: str, emit_time, frame_time, intent,  base_dir: str | Path = AGENT_BASE_DIR):
     payload = intent.model_dump() if hasattr(intent, "model_dump") else intent
-    print(f"{_BRIGHT_GREEN}[intent][{inst}][{emit_time}] {payload}{_RESET}")
+    print(f"{_BRIGHT_GREEN}[intent][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {payload}{_RESET}")
     await _append_csv_row(base_dir, emit_time, "intent", inst, payload)
 
 
@@ -81,10 +81,11 @@ async def main():
     USE_30M_CONFIRM = bool(int(os.getenv("USE_30M_CONFIRM", False)))
     INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
 
-    x = 17
+    x = 14 * 60
     x_min_ago_ms = int((time.time() - x * 60) * 1000)
     start_id = f"{x_min_ago_ms}-0"  
     FEATURES_START = start_id
+    logger.info(f"Starting at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(x_min_ago_ms)/1000))}")
     # FEATURES_START = "now"
 
     subscriber = RedisStreamsSubscriber(

@@ -30,7 +30,6 @@ class AccountService:
     """
     Account/position/leverage/mode configuration and queries.
     """
-
     def __init__(self, http_client, endpoints) -> None:
         self._http = http_client
         self._ep = endpoints
@@ -138,10 +137,6 @@ class AccountService:
         """Set position mode to net or long/short; requires no open pos/orders."""
         ...
 
-    async def set_leverage(self, instId: str, lever: int, mgnMode: TdMode) -> None:
-        """Set leverage for an instrument and margin mode."""
-        ...
-
     async def get_max_avail_size(self, instId: str, mgnMode: TdMode, ccy: Optional[str] = None) -> float:
         """Return maximum available size for order placement."""
         ...
@@ -176,17 +171,21 @@ class AccountService:
     
     async def place_order(self,
         *,
+        # Important and should be unique
+        clOrdId: str,
+        # Order params
         instId: str,
-        tdMode: Literal["cross","isolated"],
         side: Literal["buy","sell"],
         ordType: Literal["limit","market","post_only","ioc","fok","optimal_limit_ioc"],
         sz: StrNum,
         px: StrNum = None,
+        tdMode: Literal["cross","isolated"],
+        # relatively unimportant Order params
         posSide: Optional[Literal["net","long","short"]] = None,
+        tag: Optional[str] = None,
         reduceOnly: Optional[bool] = None,
         tgtCcy: Optional[Literal["base_ccy","quote_ccy"]] = None,
-        clOrdId: Optional[str] = None,
-        tag: Optional[str] = None,
+
         expTime: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
@@ -198,23 +197,26 @@ class AccountService:
                (self._ep.get("trade_order") if isinstance(self._ep, dict) else None) or \
                "/api/v5/trade/order"
 
+        assert clOrdId is not None 
+
         payload: Dict[str, Any] = {
+            "clOrdId": clOrdId,
             "instId": instId,
-            "tdMode": tdMode,
             "side": side,
             "ordType": ordType,
-            "sz": _to_float_or_none(sz),
+            "sz": str(sz),
+            "tdMode": tdMode,
         }
-        if px is not None:            payload["px"] = _to_float_or_none(px)
+                 
+        if px is not None:            payload["px"] = str(px)
         if posSide is not None:       payload["posSide"] = posSide
         if reduceOnly is not None:    payload["reduceOnly"] = "true" if reduceOnly else "false"
         if tgtCcy is not None:        payload["tgtCcy"] = tgtCcy
-        if clOrdId is None:           clOrdId = self._gen_cl_ord_id()
-        payload["clOrdId"] = clOrdId
         if tag is not None:           payload["tag"] = tag
         if expTime is not None:       payload["expTime"] = str(int(expTime))
 
-        resp = await self._http.post_private(path, json=payload)
+        resp = await self._http.post_private(path, json_body=payload)
+        
         code = str(resp.get("code", ""))
         if code != "0":
             raise RuntimeError(f"place_order http_okx code={code} msg={resp.get('msg')}")
@@ -260,7 +262,7 @@ class AccountService:
         if ordId:   payload["ordId"] = ordId
         if clOrdId: payload["clOrdId"] = clOrdId
 
-        resp = await self._http.post_private(path, json=payload)
+        resp = await self._http.post_private(path, json_body=payload)
         code = str(resp.get("code", ""))
         if code != "0":
             raise RuntimeError(f"cancel_order code={code} msg={resp.get('msg')}")
@@ -284,7 +286,29 @@ class AccountService:
         resp = await self._http.get_private(path, params=params)
         data = (resp.get("data") or [{}])[0]
         return data
-
+    
+    async def set_leverage(self, lever: int, mgnMode: str, 
+                           instId: str, ccy: str=None, posSide: str=None):
+        """
+        GET /api/v5/account/set-leverage
+        """
+        path = getattr(self._ep, "account_set_leverage", None) or \
+               (self._ep.get("account_set_leverage") if isinstance(self._ep, dict) else None) or \
+               "/api/v5/account/set-leverage"
+               
+        if mgnMode not in ["isolated", "cross"]:
+            raise ValueError("set_leverage mgnMode must be 'isolated' or 'cross'")
+        
+        params: Dict[str, Any] = {"lever": lever, "mgnMode": mgnMode}
+        
+        if instId: params["instId"] = instId
+        if ccy: params["ccy"] = ccy
+        if posSide: params["posSide"] = posSide
+        resp = await self._http.post_private(path, json_body=params)
+        data = (resp.get("data") or [{}])[0]
+        return data
+        
+        
     async def list_open_orders(self, *, instId: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         GET /api/v5/trade/orders-pending
@@ -310,8 +334,3 @@ class AccountService:
             params["after"] = str(int(after))
         resp = await self._http.get_private(path, params=params)
         return resp.get("data", []) or []
-
-    @staticmethod
-    def _gen_cl_ord_id() -> str:
-        return f"TS-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
-    

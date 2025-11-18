@@ -31,7 +31,8 @@ async def test_instruments():
             print("✅ instruments cached, total caches: %d" % len(svc._cache))
         if True:
             await svc.refresh("SWAP", "BTC-USDT-SWAP")
-            await svc.refresh("SPOT", "DOGE-USDT-SWAP")
+            await svc.refresh("SPOT", "DOGE-USDT")
+            await svc.refresh("SPOT", "BTC-USDT")
             print("✅ instruments cached, caches: ", svc._cache)
         if False:
 
@@ -110,5 +111,5 @@ async def ping_okx():
             print(r.status, await r.text())
 
 if __name__ == "__main__":
-    # asyncio.run(test_instruments())
-    asyncio.run(test_accounts())
+    asyncio.run(test_instruments())
+    # asyncio.run(test_accounts())

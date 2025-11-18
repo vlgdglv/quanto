@@ -1,12 +1,17 @@
 # trading/services/execution_service.py
-from typing import List, Optional
-from trading.models import OrderRequest, Order, Fill
+from typing import List, Optional, Dict, Any, Callable, Awaitable
+import asyncio
+import time, uuid
+from trading.models import OrderCmd, OrderAck, Instrument
+from trading.services.account_service import AccountService
+from trading.services.instrument_service import InstrumentService
 from trading.errors import OkxApiError
-
+from infra.ws_client import WSClient
 import logging
 
-class OrderFeed:
-    def __init__(self):
+
+class OrdersFeed:
+    def __init__(self, ws_client: WSClient, logger: Optional[logging.Logger]=None):
         self._ws = ws_client
         self._q: asyncio.Queue = asyncio.Queue(maxsize=8192)
         self._ws.bind_queue(self._q, put_timeout_ms=50, drop_when_full=True, microbatch=False)
@@ -21,7 +26,8 @@ class OrderFeed:
         if not self._cb:
             raise RuntimeError("OrdersFeed requires on_event callback before start()")
         self._task = asyncio.create_task(self._ws.run_forever())
-        asyncio.create_task(self._drain())
+        task = asyncio.create_task(self._drain())
+        return task
 
     async def stop(self):
         if self._task:
@@ -72,22 +78,23 @@ class OrderStore:
 class TradingService:
     def __init__(
         self,
-        exec_svc,
-        orders_feed: OrdersFeed,
         store: OrderStore,
-        rules: InstrumentRules,
+        inst_service: InstrumentService,
+        account_service: AccountService,
+        orders_feed: OrdersFeed=None,
         logger: Optional[logging.Logger]=None,
         await_live_timeout: float = 3.0
     ):
-        self._exec = exec_svc
-        self._feed = orders_feed
+        self.account_service = account_service
+        self.inst_service = inst_service
+
         self._store = store
-        self._rules = rules
         self._log = logger or logging.getLogger("TraderService")
         self._await_live_timeout = await_live_timeout
         self._wait_live: Dict[str, asyncio.Event] = {}
 
-        self._feed.on_event(self._on_ws_event)
+        
+        self._feed = orders_feed
 
     async def start(self):
         await self._feed.start()
@@ -107,26 +114,40 @@ class TradingService:
 
     async def cancel(self, instId: str, *, ordId: Optional[str]=None, clOrdId: Optional[str]=None) -> bool:
         try:
-            await self._exec.cancel_order(instId, ordId=ordId, clOrdId=clOrdId)
+            await self.account_service.cancel_order(instId=instId, ordId=ordId, clOrdId=clOrdId)
             return True
         except Exception as e:
-            self._log.warning("cancel failed: %s", e)
+            self._log.warning(f"cancel failed: {e}")
             return False
 
     async def _submit(self, cmd: OrderCmd, *, await_live: bool) -> OrderAck:
         if not cmd.clOrdId:
             cmd.clOrdId = self._gen_cl_id()
 
-        r = await self._rules.get(cmd.instId)
-        self._normalize(cmd, r)
+        await self.inst_service.get_or_refresh(cmd.instId)
+        self._normalize(cmd)
 
+        if cmd.leverage is not None:
+            resp = await self.account_service.set_leverage(instId=cmd.instId, lever=cmd.leverage, mgnMode=cmd.tdMode)
+            print(resp)
+            
         try:
-            resp = await self._exec.place_order(cmd)
+            # Unpack cmd hear
+            resp = await self.account_service.place_order(
+                clOrdId=cmd.clOrdId,
+                instId=cmd.instId,
+                side=cmd.side,
+                ordType=cmd.ordType,
+                sz=cmd.sz,
+                px=cmd.px,
+                tdMode=cmd.tdMode,
+            )
             ordId = None
             if isinstance(resp, dict):
                 ordId = (resp.get("ordId") or (resp.get("data",[{}])[0].get("ordId")))
             else:
                 ordId = getattr(resp, "ordId", None)
+            
         except Exception as e:
             return OrderAck(instId=cmd.instId, clOrdId=cmd.clOrdId, ordId=None, accepted=False, msg=str(e))
 
@@ -157,24 +178,31 @@ class TradingService:
                     self._wait_live[cl].set()
 
     @staticmethod
-    def _gen_cl_id() -> str:
-        return f"TS-{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}"
+    def gen_clOrdId() -> str:        
+        ms = str(int(time.time() * 1000)) 
+        u = uuid.uuid4().hex
+        result = ms + u[:32 - len(ms)] 
+        return result
 
-    def _normalize(self, cmd: OrderCmd, r: Dict[str, Any]):
-        def _step_round(x: float, step: float) -> float:
-            return (int(x / step)) * step
+    def _normalize(self, cmd: OrderCmd):
+        inst_id = cmd.instId
 
+        px_f: float | None = None
         if cmd.ordType != "market":
-            if not cmd.px:
+            if cmd.px is None:
                 raise ValueError("limit-like order requires px")
-            px = _step_round(float(cmd.px), float(r["px_tick"]))
-            cmd.px = f"{px:.10f}".rstrip("0").rstrip(".")
 
-        sz = _step_round(float(cmd.sz), float(r["sz_step"]))
-        if sz < float(r["min_sz"]):
-            raise ValueError(f"size<{r['min_sz']}")
-        cmd.sz = f"{sz:.10f}".rstrip("0").rstrip(".")
+            px_f = self.inst_service.round_price(inst_id, float(cmd.px))
+            cmd.px = f"{px_f:.10f}".rstrip("0").rstrip(".")
+            
+        sz_f = self.inst_service.normalize_size(inst_id, float(cmd.sz))
+        cmd.sz = f"{sz_f:.10f}".rstrip("0").rstrip(".")
 
-        allowed = r.get("td_modes") or {"cross","isolated"}
-        if cmd.tdMode not in allowed:
-            raise ValueError(f"tdMode not allowed: {cmd.tdMode}")
+            
+        self.inst_service.validate(inst_id, px_f, sz_f)
+
+        # inst = self.inst_service.get(inst_id)
+
+        # allowed = getattr(inst, "td_modes", {"cross", "isolated"})
+        # if cmd.tdMode not in allowed:
+        #     raise ValueError(f"tdMode not allowed for {inst_id}: {cmd.tdMode}")

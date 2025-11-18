@@ -45,10 +45,13 @@ class HttpContainer:
     async def start(cls, 
                     cfg: Mapping[str, Any],
                     logger: Optional[logging.Logger] = None,
+                    api_key: Optional[str] = None,
+                    secret_key: Optional[str] = None,
+                    passphrase: Optional[str] = None,
                     *,
                     time_sync_interval_sec: int = 600
                     ) -> "HttpContainer":
-        http = HttpClient(cfg, logger=logger)
+        http = HttpClient(cfg, logger=logger, api_key=api_key, secret_key=secret_key, passphrase=passphrase)
         await http.sync_server_time()
         task_sync = asyncio.create_task(_periodic_time_sync(http, time_sync_interval_sec))
         return cls(http, tasks=[task_sync])
