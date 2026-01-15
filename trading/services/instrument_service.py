@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio, re, math
 from typing import Dict, Optional, Any, Union, Sequence
 from decimal import Decimal, getcontext, ROUND_DOWN, ROUND_HALF_UP
-from trading.models import Instrument
+from trading.models import Instrument, MarketTicker
 from trading.errors import PrecisionError
 
 
@@ -156,6 +156,42 @@ class InstrumentService:
         if not inst:
             raise KeyError(f"Unknown instrument after refresh: {instId}")
         return inst
+    
+    async def get_inst_price(self, instId: str) -> MarketTicker:
+        """
+        调用 OKX API /market/ticker 获取行情数据。
+        """
+        params = {
+            "instId": instId,
+        }
+        try:
+            payload = await self._http.get_public(self._ep.market_ticker, params=params)
+
+            data = payload.get("data") or []
+
+            if not data or not isinstance(data, list) or not data[0]:
+                if getattr(self._http, "log", None):
+                    self._http.log.warning(f"No ticker data found for {instId}. Payload: {payload}")
+                return None
+            data = data[0]
+            ticker = MarketTicker(
+                instId=data["instId"],
+                last=_f(data["last"]),
+                lastSz=_f(data["lastSz"]),
+                askPx=_f(data["askPx"]),
+                askSz=_f(data["askSz"]),
+                bidPx=_f(data["bidPx"]),
+                bidSz=_f(data["bidSz"]),
+                open24h=_f(data["open24h"]),
+                high24h=_f(data["high24h"]),
+                low24h=_f(data["low24h"]),
+            )
+            return ticker
+
+        except Exception as e:
+            if getattr(self._http, "log", None):
+                self._http.log.error(f"Failed to fetch price for {instId} (err={e})")
+            return None
     
     def get(self, instId: str) -> Instrument:
         """Return instrument specs or raise if unknown."""

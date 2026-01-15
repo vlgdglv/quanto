@@ -7,7 +7,7 @@ from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Literal, Optional, Tuple, Dict, Any, Iterable, Mapping
 
-from agent.llm_factory import get_chat_model, cb
+from agent.agent_hub.llm_factory import get_chat_model, cb
 from agent.states import RDState
 from agent.schemas import FeatureFrame
 from utils.logger import logger
@@ -152,36 +152,6 @@ class RDOut(BaseModel):
 _rd_parser = PydanticOutputParser(pydantic_object=RDOut)
 _format_instructions = _rd_parser.get_format_instructions()
 
-# _rd_prompt = ChatPromptTemplate.from_template(""" 
-#                                               You are a market regime & direction analyst for {inst}. Use ONLY these snapshots: 4H: {snap4h} 1H: {snap1h} 
-#                                               1) Classify regime: LONG/SHORT/FLAT with confidence 0~1. 
-#                                               2) Give trading direction (tactical bias): LONG/SHORT/FLAT with confidence 0~1. 
-#                                               3) Provide brief invalidation conditions (e.g., MA flip, RSI midline break). Return JSON: regime, regime_confidence, direction, direction_confidence, invalidation. """)
-
-# _rd_prompt = ChatPromptTemplate.from_template("""
-# You are a strict regime/direction checker for {inst}. Use ONLY:
-
-# H4={snap4h}
-# H1={snap1h}
-
-# Guidelines (short, no math):
-# - H4 is primary. H1 only adjusts confidence or sets dir if H4=FLAT.
-# - Trend up if ema_fast>ema_slow & macd_hist>0 & rsi>55; down if opposite; else neutral.
-# - Regime expand if donchian_width_norm>1.5 or atr≫rv_ewma; compress if <1.0 and rv low.
-# - Participation support if cvd↑ and s_oi_rate_*≥0; weak/contra if d_oi_rate≪0.
-# - Funding only reduces confidence if |funding_premium_z|>1.5 or funding_time_to_next_min<120s.
-# - Overbought (e.g., rsi>80) ≠ auto-reversal.
-
-# Output JSON ONLY (no prose), keys short:
-# {{
-#  "regime":"LONG|SHORT|FLAT",
-#  "regime_confidence":0.0,
-#  "direction":"LONG|SHORT|FLAT",
-#  "direction_confidence":0.0,
-#  "reasons":["<=3 short, evidence-based"],
-#  "inv":["1-3 short invalidations"]
-# }}
-# """)
 
 _rd_prompt = ChatPromptTemplate.from_template("""
 You are a market regime & direction analyst for {inst}. 
@@ -566,9 +536,7 @@ async def run_timing_agent(inst, rd: RDState, snap15, snap30=None, positions=Non
         "snap15": snap15.model_dump(),
         "snap30": snap30.model_dump() if snap30 else None,
         "pos_info": format_position_for_prompt(positions, inst),
-    }, 
-    # config={"callbacks": cb, "run_name": "run_rd_agent", "tags": ["rd", inst]},
-    )
+    })
     return raw
 
 # ================================================  
@@ -618,7 +586,6 @@ async def run_flat_timing_agent(inst, rd: RDState, snap15, snap30=None, position
     return raw
 
 # "pos_info": format_position_for_prompt(positions, inst),
-
 # ================================================  
 #
 #   Position Timing Agent  
@@ -649,7 +616,7 @@ Policy:
                                                            
 Return JSON:
 {{
-  "action":"HOLD|CLOSE|SKIP",
+  "action":"HOLD|CLOSE",
   "side":"NONE",
   "confidence":0.0,
   "reasons": [
@@ -667,13 +634,12 @@ _position_timing_chain = (
 
 async def run_position_timing_agent(inst, rd: RDState, snap15, snap30=None, positions=None) -> TimingOut:
     raw = await _position_timing_chain.ainvoke({
-        "inst": inst,
-        "regime": rd.regime, "regime_conf": rd.regime_confidence,
-        "direction": rd.direction, "dir_conf": rd.direction_confidence,
-        "snap15": snap15.model_dump(),
-        "snap30": snap30.model_dump() if snap30 else None,
-        "pos_info": format_position_for_prompt(positions, inst),
-    }, 
-    # config={"callbacks": cb, "run_name": "run_rd_agent", "tags": ["rd", inst]},
+            "inst": inst,
+            "regime": rd.regime, "regime_conf": rd.regime_confidence,
+            "direction": rd.direction, "dir_conf": rd.direction_confidence,
+            "snap15": snap15.model_dump(),
+            "snap30": snap30.model_dump() if snap30 else None,
+            "pos_info": format_position_for_prompt(positions, inst),
+        }, 
     )
     return raw

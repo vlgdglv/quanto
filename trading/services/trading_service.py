@@ -122,10 +122,10 @@ class TradingService:
 
     async def _submit(self, cmd: OrderCmd, *, await_live: bool) -> OrderAck:
         if not cmd.clOrdId:
-            cmd.clOrdId = self._gen_cl_id()
+            cmd.clOrdId = self.gen_clOrdId()
 
         await self.inst_service.get_or_refresh(cmd.instId)
-        self._normalize(cmd)
+        cmd = self._normalize(cmd)
 
         if cmd.leverage is not None:
             resp = await self.account_service.set_leverage(instId=cmd.instId, lever=cmd.leverage, mgnMode=cmd.tdMode)
@@ -200,6 +200,8 @@ class TradingService:
 
             
         self.inst_service.validate(inst_id, px_f, sz_f)
+
+        return cmd
 
         # inst = self.inst_service.get(inst_id)
 

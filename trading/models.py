@@ -16,6 +16,20 @@ class Instrument:
 
 
 @dataclass
+class MarketTicker:
+    instId: str     
+    last: float     # 最新成交价
+    lastSz: float   # 最新成交量
+    askPx: float    # 卖一价
+    askSz: float    # 卖一量
+    bidPx: float    # 买一价
+    bidSz: float    # 买一量
+    open24h: float
+    high24h: float
+    low24h: float    
+
+
+@dataclass
 class Fill:
     ordId: str
     instId: str

@@ -13,6 +13,7 @@ class Endpoints:
     use_simulated_header: bool
 
     # 常用 REST 路径常量（便于统一引用）
+    market_ticker: str = "/api/v5/market/ticker"
     public_instruments: str = "/api/v5/public/instruments"
     trade_order: str = "/api/v5/trade/order"
     trade_cancel: str = "/api/v5/trade/cancel-order"

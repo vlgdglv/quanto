@@ -1,7 +1,7 @@
 okx:
   rest_base:
     live:  https://www.okx.com
-    paper: https://eea.okx.com
+    paper: https://www.okx.com
   ws:
     live:
       public:   wss://ws.okx.com:8443/ws/v5/public
@@ -13,12 +13,12 @@ okx:
       private:  wss://wseeapap.okx.com:8443/ws/v5/private
       
 trading:
-  env: LIVE                # PAPER / LIVE
+  mode: paper                # PAPER / LIVE
   simulated_header: true
   instType: SWAP
   leverage: 5
   posMode: net              # net / long_short
-  tdMode: cross             # cross / isolated
+  tdMode: isolated             # cross / isolated
   slippage_bps: 10
   reconcile:
     poll_ms: 600

@@ -17,6 +17,11 @@ OKX_API_KEY = os.getenv("OKX_API_KEY")
 OKX_SECRET = os.getenv("OKX_SECRET_KEY")
 OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
 
+OKX_API_KEY_PAPER = os.getenv("OKX_API_KEY_PAPER")
+OKX_SECRET_PAPER = os.getenv("OKX_SECRET_KEY_PAPER")
+OKX_PASSPHRASE_PAPER = os.getenv("OKX_PASSPHRASE_PAPER")
+
+
 async def test_instruments():
     cfg = load_cfg("configs/okx_trading_config.yaml")
     endpoints = make_endpoints_from_cfg(cfg)
@@ -26,10 +31,13 @@ async def test_instruments():
     svc = InstrumentService(http, endpoints)
     # Test SPOT
     try:
+        if True:
+            shit = await svc.get_inst_price("DOGE-USDT-SWAP")
+            print(shit)
         if False:
             await svc.refresh("SPOT")
             print("✅ instruments cached, total caches: %d" % len(svc._cache))
-        if True:
+        if False:
             await svc.refresh("SWAP", "BTC-USDT-SWAP")
             await svc.refresh("SPOT", "DOGE-USDT")
             await svc.refresh("SPOT", "BTC-USDT")
@@ -83,9 +91,13 @@ async def test_instruments():
 
 
 async def test_accounts():
-    cfg = load_cfg("configs/okx_trading_config.yaml")
+    cfg = load_cfg("configs/okx_account_config.yaml")
     endpoints = make_endpoints_from_cfg(cfg)
-    container = await HttpContainer.start(cfg, logger, time_sync_interval_sec=600)
+    container = await HttpContainer.start(cfg, logger, 
+                                          api_key=OKX_API_KEY_PAPER,
+                                          secret_key=OKX_SECRET_PAPER,
+                                          passphrase=OKX_PASSPHRASE_PAPER,
+                                          time_sync_interval_sec=600)
 
     http = container.http
     svc = AccountService(http, endpoints)

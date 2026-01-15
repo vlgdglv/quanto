@@ -10,9 +10,13 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv(os.path.expanduser("~/.okx/.env"))
-OKX_API_KEY = os.getenv("OKX_API_KEY")
-OKX_SECRET = os.getenv("OKX_SECRET_KEY")
-OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
+# OKX_API_KEY = os.getenv("OKX_API_KEY")
+# OKX_SECRET = os.getenv("OKX_SECRET_KEY")
+# OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
+
+OKX_API_KEY_PAPER = os.getenv("OKX_API_KEY_PAPER")
+OKX_SECRET_PAPER = os.getenv("OKX_SECRET_KEY_PAPER")
+OKX_PASSPHRASE_PAPER = os.getenv("OKX_PASSPHRASE_PAPER")
 
 os.environ["ALL_PROXY"] = os.getenv("ALL_PROXY", "http://127.0.0.1:7897")
 for k in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy"):
@@ -26,13 +30,18 @@ for k in ("ALL_PROXY","all_proxy","HTTPS_PROXY","https_proxy","HTTP_PROXY","http
         print(f"[proxy] {k}={v}")
 
 from infra.redis_stream import RedisStreamsSubscriber
-
+from infra.ws_client  import WSClient
 from agent.schemas import FeatureFrame, TF
-from agent.worker import InstrumentAgentOrchestrator, LatestStore
+from agent.worker import InstrumentWorker, LatestStore
 from agent.states import SharedState
+from agent.trade_machine import TradeMachine
+
 from utils import logger, load_cfg
 from trading.services.endpoints import make_endpoints_from_cfg
 from trading.services.account_service import AccountService
+from trading.services.instrument_service import InstrumentService
+from trading.services.trading_service import TradingService, OrderStore, OrdersFeed
+
 
 from infra import HttpContainer
 
@@ -78,9 +87,10 @@ async def main():
     FEATURES_STREAM = os.getenv("FEATURES_STREAM", "DOGE-USDT-SWAP")
     FEATURES_START = os.getenv("FEATURES_START", "now")
     USE_30M_CONFIRM = bool(int(os.getenv("USE_30M_CONFIRM", False)))
-    INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
+    # INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
+    INST = os.getenv("INSTS", "DOGE-USDT-SWAP")
 
-    x = 14 * 60
+    x = 0.5 * 60
     x_min_ago_ms = int((time.time() - x * 60) * 1000)
     start_id = f"{x_min_ago_ms}-0"  
     FEATURES_START = start_id
@@ -99,30 +109,71 @@ async def main():
     def queue_factory(inst: str, tf: TF) -> asyncio.Queue:
         return queues[(inst, tf)]
 
-    shared_states: Dict[str, SharedState] = {inst: SharedState(rd_ttl_sec=3600) for inst in INSTS}
+    shared_states: Dict[str, SharedState] = {INST: SharedState(rd_ttl_sec=3600) }
     
     trading_cfg = load_cfg("configs/okx_trading_config.yaml")
     endpoints = make_endpoints_from_cfg(trading_cfg)
 
-    container = await HttpContainer.start(trading_cfg, logger, time_sync_interval_sec=600)
+    container = await HttpContainer.start(trading_cfg, logger, 
+                                          api_key=OKX_API_KEY_PAPER,
+                                          secret_key=OKX_SECRET_PAPER,
+                                          passphrase=OKX_PASSPHRASE_PAPER,
+                                          time_sync_interval_sec=600)
+    
     http = container.http
     account_service = AccountService(http, endpoints)
+    instrument_service = InstrumentService(http, endpoints)
+    trading_service =  TradingService(
+        store=OrderStore(),
+        inst_service=instrument_service,
+        account_service=account_service,
+        logger=logger
+    )
+    
+    # Stupid code, need to be refactored
+    orders_args = [{
+        "channel":"orders",
+        "instType":"SWAP",   
+    }]  
+    mode = trading_cfg["trading"]["mode"]
+    
+    orders_ws = WSClient(
+        url=trading_cfg["okx"]["ws"][mode]["private"],
+        subscribe_args=orders_args,
+        need_login=True,
+        api_key=OKX_API_KEY_PAPER,
+        secret_key=OKX_SECRET_PAPER,
+        passphrase=OKX_PASSPHRASE_PAPER,
+        inst_name="orders"
+    )
+    orders_feed = OrdersFeed(orders_ws)
 
-    workers = [
-        InstrumentAgentOrchestrator(
-            inst=inst,
-            latest=latest,
-            q_factory=queue_factory,
-            shared_state=shared_states[inst],
-            emit_signal=emit_signal,
-            emit_intent=emit_intent,
-            use_30m_confirm=USE_30M_CONFIRM,
-            account_service=account_service,
-        )
-        for inst in INSTS
-    ]
-    for w in workers:
-        await w.start()
+    trade_machine = TradeMachine(
+        inst=INST,
+        account_service=account_service,
+        trading_service=trading_service,
+        instrument_service=instrument_service,
+        orders_feed=orders_feed,
+        trading_ccy="USDT",
+        leverage=10,
+    )
+    
+    orders_feed.on_event(trade_machine.on_order_event)
+    await orders_feed.start()
+
+    worker = InstrumentWorker(
+        inst=INST,
+        latest=latest,
+        q_factory=queue_factory,
+        shared_state=shared_states[INST],
+        emit_signal=emit_signal,
+        emit_intent=emit_intent,
+        use_30m_confirm=USE_30M_CONFIRM,
+        account_service=account_service,
+        trade_machine=trade_machine
+    )
+    
+    await worker.start()
 
     async def on_message(payload: dict):
         try:
@@ -146,109 +197,18 @@ async def main():
             except Exception as e:
                 logger.warning("Exception in on_message: %s", str(e))
                 
-    async def on_message_with_mock(payload: dict):
-        # quick validation and canonicalization
-        try:
-            f = FeatureFrame(**payload)
-            print("[feature]", f.inst, f.tf, f.ts_close)
-        except Exception:
-            # invalid payload: drop
-            logger.warning(f"Bad payload dropped, payload={str(payload)[:200]}")
-            return
-
-        # helper to create a new frame with same content but overwritten tf and ts (if desired)
-        def _mk_frame(orig: FeatureFrame, tf_new: str) -> FeatureFrame:
-            # Keep same ts by default; you may want to adjust ts if you need distinct epochs
-            new_payload = {
-                "inst": orig.inst,
-                "tf": tf_new,
-                "ts_close": orig.ts_close,
-                "features": orig.features,
-                "kind": orig.kind
-            }
-            return FeatureFrame(**new_payload)
-
-        incoming_tf = f.tf
-        if incoming_tf == "30m":
-            f = _mk_frame(f, "4H")
-        elif incoming_tf == "15m":
-            f = _mk_frame(f, "1H")
-        elif incoming_tf == "5m":
-            f = _mk_frame(f, "15m")
-        else:
-            return
-        
-        print("[MOCK] inst %s, tf (%s->%s), ts %s" % (f.inst, incoming_tf, f.tf, f.ts_close))
-
-        latest.update(f)
-        q = queues.get((f.inst, f.tf))
-        if q:
-            try:
-                q.put_nowait(f)
-            except asyncio.QueueFull:
-                try:
-                    _ = q.get_nowait()
-                    q.put_nowait(f)
-                except Exception as e:
-                    logger.warning("Exception in on_message_with_mock: %s", str(e))
                 
-
-        # list of frames to push: include original
-        # frames_to_push = [f]
-
-        # # --- Mocking rules ---
-        # incoming_tf = f.tf
-        # # 30m -> also act as 4H and 1H (for testing RD)
-        # if incoming_tf == "30m":
-        #     frames_to_push.append(_mk_frame(f, "4H"))
-        #     frames_to_push.append(_mk_frame(f, "1H"))
-        # # 15m -> also act as 30m (so timing agent sees both)
-        # elif incoming_tf == "15m":
-        #     frames_to_push.append(_mk_frame(f, "30m"))
-        # # 5m -> act as 15m
-        # elif incoming_tf == "5m":
-        #     frames_to_push.append(_mk_frame(f, "15m"))
-        # # (optionally) if incoming is a specially marked test tf e.g., "mock_all",
-        # # you can expand here to create all TFs.
-        # else:
-        #     return
-        
-        # # --- Push all frames into latest store and corresponding queues ---
-        # for frame in frames_to_push:
-        #     try:
-        #         # update latest for each (keeps SharedStore / LatestStore consistent)
-        #         latest.update(frame)
-        #     except Exception as e:
-        #         # ignore latest update failures for testing
-        #         logger.warning(f"Failed to update latest {e}, payload={str(payload)[:200]}")
-        #     print("[MOCK] %s %s %s" % (frame.inst, frame.tf, frame.ts_close))
-        #     # route to queue if queue exists
-        #     q = queues.get((frame.inst, frame.tf))
-        #     if q:
-        #         try:
-        #             q.put_nowait(frame)
-        #         except asyncio.QueueFull:
-        #             # drop oldest, keep newest
-        #             try:
-        #                 _ = q.get_nowait()
-        #                 q.put_nowait(frame)
-        #             except Exception:
-        #                 # if even that fails, skip silently in test
-        #                 logger.warning(
-        #                     f"Failed to push to queue, payload={str(payload)[:200]}"
-        #                 )
 
     logger.info(
         "Agent app started insts: {}, redis: {}, stream: {}".format(
-            INSTS, REDIS_DSN, FEATURES_STREAM
+            INST, REDIS_DSN, FEATURES_STREAM
         )
     )
 
     try:
         await subscriber.run_forever(on_message)
     finally:
-        for w in workers:
-            await w.stop()
+        await worker.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())

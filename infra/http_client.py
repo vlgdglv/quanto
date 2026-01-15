@@ -268,7 +268,7 @@ class HttpClient:
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 if retry and attempt < self.max_attempts:
                     await self._sleep_backoff(attempt)
-                    logger.warning(f"Network error: {e}, retrying...")
+                    logger.warning(f"Network error: {e} when requesting {url}, retrying...")
                     continue
                 raise HttpError(599, f"Network error: {e}") from e
             except OkxApiError:
