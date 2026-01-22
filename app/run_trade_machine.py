@@ -32,7 +32,7 @@ for k in ("ALL_PROXY","all_proxy","HTTPS_PROXY","https_proxy","HTTP_PROXY","http
 from infra.redis_stream import RedisStreamsSubscriber
 from infra.ws_client  import WSClient
 from agent.schemas import FeatureFrame, TF
-from agent.worker import InstrumentWorker, LatestStore
+from agent.agent_orchestrator import InstrumentAgentOrchestrator, LatestStore
 from agent.states import SharedState
 from agent.trade_machine import TradeMachine
 
@@ -161,7 +161,7 @@ async def main():
     orders_feed.on_event(trade_machine.on_order_event)
     await orders_feed.start()
 
-    worker = InstrumentWorker(
+    worker = InstrumentAgentOrchestrator(
         inst=INST,
         latest=latest,
         q_factory=queue_factory,

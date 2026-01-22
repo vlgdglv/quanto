@@ -13,6 +13,7 @@ from agent.llm_agents import (run_regime_agent, run_direction_agent,
                               build_agent_snapshot, format_position_for_prompt)
 from agent.trade_machine import TradeMachine, PositionState
 
+from infra.data_relay import DataRelay
 from utils.logger import logger
 from trading.models import Position
 from trading.services.account_service import AccountService
@@ -54,6 +55,7 @@ class InstrumentAgentOrchestrator:
                  inst: str,  
                  q_factory: Callable, 
                  shared_state: SharedState,
+                 data_relay: DataRelay,
                  emit_signal: Optional[Callable] = None, 
                  emit_intent: Optional[Callable] = None, 
                  use_30m_confirm: bool = False, 
@@ -62,10 +64,10 @@ class InstrumentAgentOrchestrator:
                  ):
         self.inst = inst
         self.board = ContextBoard()
-        self.q4h = q_factory(inst, "4H")
-        self.q1h = q_factory(inst, "1H")
-        self.q15 = q_factory(inst, "15m")
-        self.q30 = q_factory(inst, "30m") if use_30m_confirm else None
+        self.q4h = data_relay.subscribe(inst, "4H", max_len=4)
+        self.q1h = data_relay.subscribe(inst, "1H", max_len=10)
+        self.q15 = data_relay.subscribe(inst, "15m", max_len=200)
+        self.q30 = data_relay.subscribe(inst, "30m", max_len=200) if use_30m_confirm else None
         
         self.shared = shared_state
         self.emit_signal = emit_signal
