@@ -31,8 +31,9 @@ for k in ("ALL_PROXY","all_proxy","HTTPS_PROXY","https_proxy","HTTP_PROXY","http
 
 from infra.redis_stream import RedisStreamsSubscriber
 from infra.ws_client  import WSClient
+from infra.data_relay import DataRelay
 from agent.schemas import FeatureFrame, TF
-from agent.agent_orchestrator import InstrumentAgentOrchestrator, LatestStore
+from agent.agent_orchestrator import InstrumentAgentOrchestrator
 from agent.states import SharedState
 from agent.trade_machine import TradeMachine
 
@@ -103,12 +104,6 @@ async def main():
         start= FEATURES_START
     )
 
-    latest = LatestStore()
-    queues: Dict[Tuple[str, TF], asyncio.Queue] = defaultdict(lambda: asyncio.Queue(maxsize=2048))
-
-    def queue_factory(inst: str, tf: TF) -> asyncio.Queue:
-        return queues[(inst, tf)]
-
     shared_states: Dict[str, SharedState] = {INST: SharedState(rd_ttl_sec=3600) }
     
     trading_cfg = load_cfg("configs/okx_trading_config.yaml")
@@ -161,11 +156,11 @@ async def main():
     orders_feed.on_event(trade_machine.on_order_event)
     await orders_feed.start()
 
+    data_relay = DataRelay()
     worker = InstrumentAgentOrchestrator(
         inst=INST,
-        latest=latest,
-        q_factory=queue_factory,
         shared_state=shared_states[INST],
+        data_relay=data_relay,
         emit_signal=emit_signal,
         emit_intent=emit_intent,
         use_30m_confirm=USE_30M_CONFIRM,
@@ -173,31 +168,10 @@ async def main():
         trade_machine=trade_machine
     )
     
-    await worker.start()
-
-    async def on_message(payload: dict):
-        try:
-            f = FeatureFrame(**payload)
-            latest.update(f)
-            q = queues.get((f.inst, f.tf))
-        except Exception:
-            logger.warning(f"Bad payload dropped, payload={str(payload)[:200]}")
-            return
-        # print("[feature]", f.inst, f.tf, f.ts_close)
-        
-        if q:
-            try:
-                q.put_nowait(f)
-            except asyncio.QueueFull:
-                try:
-                    _ = q.get_nowait()
-                    q.put_nowait(f)
-                except Exception as e:
-                    logger.warning("Exception in on_message: %s", str(e))
-            except Exception as e:
-                logger.warning("Exception in on_message: %s", str(e))
-                
-                
+    await asyncio.gather(
+        data_relay.start(subscriber),
+        worker.start()
+    )
 
     logger.info(
         "Agent app started insts: {}, redis: {}, stream: {}".format(
@@ -205,10 +179,7 @@ async def main():
         )
     )
 
-    try:
-        await subscriber.run_forever(on_message)
-    finally:
-        await worker.stop()
+    
 
 if __name__ == "__main__":
     asyncio.run(main())

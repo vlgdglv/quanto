@@ -28,7 +28,7 @@ class DataRelay:
     async def _process_payload(self, payload: dict):
         try:
             frame = FeatureFrame(**payload)
-            
+            print(frame)
             queues = self._subscribers.get((frame.inst, frame.tf), None)
             if queues:
                 for q in queues:

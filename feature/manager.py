@@ -7,7 +7,7 @@ from utils.logger import logger
 
 
 class WorkerManager:
-    def __init__(self, cfg: Dict[str, Any], redis_dsn: str, stream_name: str = "features"):
+    def __init__(self, cfg: Dict[str, Any], redis_dsn: str, stream_name: str = None):
         self.cfg = cfg
         self.redis_dsn = redis_dsn
         self.stream_name = stream_name

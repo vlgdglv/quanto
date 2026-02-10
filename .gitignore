@@ -88,3 +88,5 @@ dmypy.json
 .DS_Store
 
 prompts/*.txt
+
+trash_bin/

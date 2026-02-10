@@ -13,8 +13,6 @@ from trading.services.account_service import AccountService
 from trading.services.trading_service import TradingService, OrdersFeed
 from trading.services.instrument_service import InstrumentService
 
-from agent.llm_agents import TimingOut
-from agent.states import RDState
 
 from utils.logger import logger
 
@@ -46,15 +44,13 @@ class PositionState(Enum):
 @dataclass
 class PositionPlan:
     inst: str
-    state: PositionState
-    
     side: Optional[Side] = None
     size: float = None
 
     created_ts: float = None    
 
     stop_price: Optional[float] = None    # 硬止损
-    tp_price: Optional[float]   = None     # 第一止盈
+    tp_price: Optional[float]   = None    # 第一止盈
     
     horizon_sec: Optional[int]  = None    # 期望最大持仓时间（超过则 time-stop）
     min_hold_sec: Optional[int] = None    # 最短持仓时间（避免刚进就被噪声震出）
@@ -98,7 +94,8 @@ class TradeMachine:
     ) -> None:
         self.inst = inst
         # User must ensure initial state is NO_POSITION
-        self._pos = PositionPlan(inst=inst, state=PositionState.NO_POSITION)
+        self.state: PositionState = PositionState.NO_POSITION
+        self.postion_state = PositionPlan(inst=inst)
 
         self._on_new_order = on_new_order
         self._on_close = on_close
@@ -118,7 +115,7 @@ class TradeMachine:
         self._pending_close_order_id: Optional[str] = None
         
     async def _transition_to(self, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
-        current_state = self._pos.state
+        current_state = self.state
         
         if not self._is_valid_transition(current_state, target_state):
             logger.error(f"Attempted invalid transition from {current_state} to {target_state}")
@@ -126,7 +123,7 @@ class TradeMachine:
         # logger.info(f"[STATE CHANGE] {current_state} -> {target_state}, payload={payload}")
         
         # Maybe some hooks here
-        self._pos.state = target_state
+        self.state = target_state
         if payload:
             self._update_position_data(payload)
             
@@ -144,16 +141,15 @@ class TradeMachine:
         pass
         
     def get_state(self):
-        return self._pos.state
+        return self.state
     
     async def step(self,
-                   decisions: TimingOut,
+                   decisions,
                    position: List[Position],
-                   regime_and_direction: RDState,
                    ):
-        if self._pos.state == PositionState.NO_POSITION:
+        if self.state == PositionState.NO_POSITION:
             await self._handle_no_position(decisions.action)
-        elif self._pos.state == PositionState.OPEN:
+        elif self.state == PositionState.OPEN:
             await self._handle_open_position(decisions.action)
         else:
             raise NotImplementedError
@@ -162,10 +158,10 @@ class TradeMachine:
                                   action: str,  # ["BUY", "SELL", "SKIP"]
                                  ):
         
-        if action == "SKIP":
+        if action == "STALK":
             return
         
-        side = "buy" if action.upper() == "BUY" else "sell"
+        side = "buy" if action.upper() == "OPEN_LONG" else "sell"
         
         try:
             balance_list: List[Balance] = await self.account_service.get_balance(ccy=self.ccy)
@@ -225,16 +221,16 @@ class TradeMachine:
                                     action: str, # ["HOLD", "CLOSE"]
                                     ):
 
-        if action == "HOLD":
+        if action.upper() == "RIDE_PROFIT":
             return
-        if action == "CLOSE":
-            side = "sell" if self._pos.side.lower() == "buy" else "buy"
+        if action.upper() == "CLOSE_SHORT" or action.upper() == "CLOSE_LONG":
+            side = "sell" if self.postion_state.side.lower() == "buy" else "buy"
             try:
                 order_cmd = OrderCmd(
                     instId=self.inst,
                     side=side,
                     ordType="market",
-                    sz=str(self._pos.size),
+                    sz=str(self.postion_state.size),
                     tdMode="isolated",
                     posSide="net",
                 )
@@ -248,7 +244,6 @@ class TradeMachine:
                 # self._on_close(CloseRequest(inst=self.inst, reason="TradeMachine Decision"))
             except Exception as e:
                 logger.error(f"Error processing OPEN action CLOSE: {e}")
-
 
     def _calculate_order_size(self, 
                               available_balance_str: str, 
@@ -337,7 +332,6 @@ class TradeMachine:
     ):
         logger.debug(f"[OPEN_ORDER_EVENT] state={state}, evt={evt}")
 
-        # 可按你交易所状态做映射
         FILLED_STATES = {"filled", "partially_filled"}
         CANCELED_STATES = {"canceled", "canceled_by_system"}
         REJECTED_STATES = {"rejected"}
@@ -345,8 +339,8 @@ class TradeMachine:
         if state in FILLED_STATES:
             filled_sz = float(acc_fill_sz_str) if acc_fill_sz_str else float("0")
             state_change_payload = {
-                "side": side or self._pos.side,
-                "size": float(filled_sz) if filled_sz else self._pos.size,
+                "side": side or self.postion_state.side,
+                "size": float(filled_sz) if filled_sz else self.postion_state.size,
                 "opened_ts": time.time(),
             }
             await self._transition_to(PositionState.OPEN, state_change_payload)

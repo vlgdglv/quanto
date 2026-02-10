@@ -5,16 +5,14 @@ from langchain.output_parsers import PydanticOutputParser
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 
-from agent.agent_hub.llm_factory import get_chat_model 
+from agent.llm_factory import get_chat_model 
 
 
 class BaseAgentOutput(BaseModel):
     @field_validator("*", mode="before") 
     @classmethod
     def _coerce_list(cls, v, info):
-        # 这是一个通用技巧：只针对定义为 List 的字段生效
         field_type = info.annotation
-        # 简单判断是否是 List 类型 (Python 3.8+ 可能需要 get_origin)
         if hasattr(field_type, "__origin__") and field_type.__origin__ is list:
             if v is None: return []
             if isinstance(v, str): return [v.strip()]
@@ -32,11 +30,10 @@ def create_agent_chain(
     
     prompt = ChatPromptTemplate.from_template(
         prompt_text,
-        partial_variables={"fomrat_instructions": parser.get_format_instructions()},
+        partial_variables={"format_instructions": parser.get_format_instructions()},
     )
     
     llm = get_chat_model(task=model_name)
 
-    # 构造 Chain
     chain = prompt | llm | parser
     return chain
