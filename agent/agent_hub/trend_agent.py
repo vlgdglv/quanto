@@ -92,64 +92,92 @@ class TrendOutput(BaseModel):
 
 TREND_PROMPT_TEMPLATE = """
 Role: Lead Alpha Strategist (High-Performance Crypto Desk).
-Target: Capture 1-5%% daily returns by identifying **High Volatility Expansions** and **Strong Trends** early.
+Objective: Maximize Sharpe Ratio by identifying **High Quality** trends and filtering out **Fake-outs**.
 
 # 0. CONTEXTUAL CONTINUITY
 Previous Analysis:
 {last_context}
-*Instruction:* Use this to damp noise. Only flip regime if the structural break is confirmed by Momentum & Volume.
+*Instruction:* Maintain thesis stability unless a **Structural Break** occurs. Do not flip-flop on noise.
 
-# 1. MARKET DATA
+# 1. MARKET DATA INPUTS
+## MACRO STRUCTURAL FLOW ({anchor_tf})
+{anchor_snap}
+*Focus:* Market Structure (Higher Highs/Lows), Donchian Width (Volatility cycle), Funding/OI (Crowding).
 
-## MACRO (4H - Structural Flow)
-{snap4h}
-*Critical Check:*
-- **Expansion vs Compression:** Is `donchian_width` expanding? (Opportunity for high returns).
-- **Crowding:** Is `funding_premium_z` extreme? (Opportunity for Reversal/Squeeze).
+## MOMENTUM DRIVER ({driver_tf})
+{driver_snap}
+*Focus:* Momentum velocity, Volume delta, RSI Regime (Overbought is bullish in trends, bearish in ranges).
 
-## TREND (1H - Momentum)
-{snap1h}
-*Critical Check:*
-- Alignment with 4H.
-- RSI Context: Are we holding high levels (Strength) or diverging (Weakness)?
+# 2. STRATEGIC REASONING PROCESS (Chain of Thought)
 
-# 2. STRATEGIC REASONING (Chain of Thought)
+**Step A: Define the Market Regime (The "Playbook")**
+- Is this a Trending mechanism or a Mean Reverting mechanism?
+- *Check:* If Price > EMA but Volatility is compressing -> It's "Coiling", not yet "Trending".
+- *Check:* If Price is exploding but Volume is dropping -> It's a "Liquidity Trap/Exhaustion".
 
-**Step A: Volatility & Opportunity Assessment (The "5%% Goal" Check)**
-- We make money on **Movement**, not Stagnation.
-- Is the market entering a `VOLATILITY_EXPANSION` phase? (Squeeze release, channel breakout).
-- If Yes -> This is a "High Alert" state. Bias must be aggressive.
+**Step B: Synthesize Evidence (The "Why" Stack)**
+- **Do not list single metrics.** Look for **CONFLUENCE**.
+- *Good Evidence:* "Price broke resistance + Open Interest Spiked + Funding remained neutral (Spot driven move)."
+- *Bad Evidence:* "RSI is 60." (Too generic).
+- Ask: Is the trend supported by *Smart Money* (CVD/Volume) or just *Leverage* (Funding/OI)?
 
-**Step B: Conflict Resolution & Trap Detection**
-- **The "Uncertainty" Filter:** If 4H is Bullish but 1H is Bearish -> Do not simply say "Uncertain". Analyze the **Volume/OFI**.
-- If conflict exists, is it a *Pullback* (Buy opportunity) or a *Reversal* (Sell opportunity)? **Force a probabilistic bias.**
-- **Trap Check:** High Price + High Funding + Low Volatility = **Long Squeeze Risk**.
+**Step C: Identify Structural Risks (The "Pre-Mortem")**
+- **What kills this trade?**
+- *Bull Trap Risk:* Price high + Diverging Momentum + Excessive Leverage.
+- *Bear Trap Risk:* Price dumping into support + Funding deeply negative (Short Squeeze setup).
+- *Chop Risk:* Moving Averages flat + Price oscillating around VWAP.
 
-**Step C: Define the Regime & Mandate**
-- **TREND_BULL:** Clear uptrend. Mandate: "Buy Dips & Breakouts".
-- **TREND_BEAR:** Clear downtrend. Mandate: "Sell Rallies & Breakdowns".
-- **RANGE_BOUND:** Clear boundaries. Mandate: "Mean Reversion (Scalp edges)".
-- **VOLATILITY_EXPANSION:** ATR exploding. Mandate: "Chase the momentum aggressively".
-- **CONFLICT_CHOP:** Contradictory signals with no clear edge. Mandate: "Defense first, wait for clarity".
+**Step D: Tactical Execution**
+- Based on A, B, and C, what is the *precise* instruction for the 15m execution bot?
 
 # 3. OUTPUT GENERATION
 Produce a JSON strictly matching the schema.
-
-*Field Guidelines:*
-- `regime`: Select strictly from [TREND_BULL, TREND_BEAR, RANGE_BOUND, VOLATILITY_EXPANSION, CONFLICT_CHOP].
-- `structural_bias`: Not just direction, but the *quality* of the move (e.g., "Grinding up with low volume" vs "Explosive impulse").
-- `tactical_mandate`: Give specific orders to the 15m bot. Examples:
-    - "Aggressive Mode: Ignore overbought RSI, chase breakouts." (For Volatility Expansion)
-    - "Defensive Mode: Only take entries at Donchian Lower Band." (For Range)
-- `invalidation_trigger`: Precise level or condition that kills this view.
-
+*Field Guidelines for "Deep Insight":*
+- `regime`:
+    - **TREND_BULL/BEAR**: Sustained move with Volume backing.
+    - **VOLATILITY_EXPANSION**: Sudden widening of bands, breakout mode.
+    - **RANGE/CHOP**: Rejection from bands, reversion to mean.
+- `structural_bias`: 
+    - Describe the **Texture** of the market. (e.g., "Grinding higher on weak volume (Exhaustion)" vs "Explosive impulse with reset indicators (Healthy)").
+- `key_evidence`: [CRITICAL]
+    - **MUST** combine at least 2 data points per item to show **Causality**.
+    - Format: "Signal A + Signal B -> Implication".
+    - Example 1: "Price breaking Donchian High + Rising ADX -> Strong Trend Confirmation."
+    - Example 2: "Funding Rate low + Price rising -> Spot-driven organic rally (Sustainable)."
+- `risk_factors`: [CRITICAL]
+    - Focus on **Traps** and **Liquidity**.
+    - Example 1: "Bearish Divergence on RSI while Price hits resistance -> Reversal imminent."
+    - Example 2: "Funding Z-Score > 2.5 -> Overcrowded longs, high risk of cascade."
+- `tactical_mandate`: 
+    - Be directive. (e.g., "Aggressive: Buy market on any 15m candle close > EMA." or "Conservative: Wait for sweep of previous low before longing.")
 {format_instructions}
 """
-
 
 def get_trend_agent():
     return create_agent_chain(TrendOutput, TREND_PROMPT_TEMPLATE, model_name="gpt-4o")
 
+
+async def invoke_trend_agent(
+    anchor_frame: FeatureFrame, 
+    driver_frame: FeatureFrame,
+    last_context: Optional[TrendOutput],
+) -> TrendOutput:
+    anchor_snap = build_snapshot_for_trend(anchor_frame)
+    driver_snap = build_snapshot_for_trend(driver_frame)
+    
+    if last_context:
+        last_context = last_context.model_dump()
+    else:
+        last_context = "This is the first run, cold starting."
+    
+    trend_output: TrendOutput = await get_trend_agent().ainvoke({
+        "anchor_snap": anchor_snap.model_dump(),
+        "anchor_tf": anchor_frame.tf,
+        "driver_snap": driver_snap.model_dump(),
+        "driver_tf": driver_frame.tf,
+        "last_context": last_context
+    })
+    return trend_output
 
 async def main():
     sample_frame_1H = FeatureFrame(

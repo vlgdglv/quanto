@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 ENABLE_FILE_LOG = os.getenv("ENABLE_FILE_LOG", "0") == "1"
 
 log_dir = Path(__file__).resolve().parents[1] / "logs"
@@ -18,7 +19,7 @@ def init_logger():
 
     logger.add(
         sys.stdout,
-        level="INFO",
+        level=LOG_LEVEL,
         enqueue=True,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | {level} | {message}",
     )
@@ -26,7 +27,7 @@ def init_logger():
     if ENABLE_FILE_LOG:
         logger.add(
             log_file,
-            level="DEBUG",
+            level=LOG_LEVEL,
             rotation="100 MB",
             retention="90 days",
             enqueue=True,

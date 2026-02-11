@@ -34,7 +34,7 @@ from infra.ws_client  import WSClient
 from infra.data_relay import DataRelay
 from agent.schemas import FeatureFrame, TF
 from agent.agent_orchestrator import InstrumentAgentOrchestrator
-from agent.states import SharedState
+
 from agent.trade_machine import TradeMachine
 
 from utils import logger, load_cfg
@@ -104,8 +104,6 @@ async def main():
         start= FEATURES_START
     )
 
-    shared_states: Dict[str, SharedState] = {INST: SharedState(rd_ttl_sec=3600) }
-    
     trading_cfg = load_cfg("configs/okx_trading_config.yaml")
     endpoints = make_endpoints_from_cfg(trading_cfg)
 
@@ -159,7 +157,6 @@ async def main():
     data_relay = DataRelay()
     worker = InstrumentAgentOrchestrator(
         inst=INST,
-        shared_state=shared_states[INST],
         data_relay=data_relay,
         emit_signal=emit_signal,
         emit_intent=emit_intent,

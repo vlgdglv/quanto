@@ -1,7 +1,7 @@
 # infra/http_client.py
 from __future__ import annotations
 
-import os
+import socket
 import aiohttp
 import asyncio
 import base64
@@ -112,8 +112,29 @@ class HttpClient:
         self.clock_offset_ms: int = 0
 
         if self.session is None:
-            timeout = aiohttp.ClientTimeout(total=self.timeout_ms / 1000)
-            self.session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False, trust_env=True)
+            connector = aiohttp.TCPConnector(
+                family=socket.AF_INET,
+                limit=100,
+                limit_per_host=20,
+                ttl_dns_cache=300,
+                keepalive_timeout=60,
+                force_close=False,
+                # ssl=False
+            )
+
+            timeout = aiohttp.ClientTimeout(
+                total=5,
+                connect=2,
+                sock_connect=2,
+                sock_read=2
+            )
+            
+            self.session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout, 
+                raise_for_status=False, 
+                trust_env=True
+            )
 
         self.log.debug(
             f"HttpClient init base_url={self.base_url} env={self.env} key={_mask(self.api_key)}"

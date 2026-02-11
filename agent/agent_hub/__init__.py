@@ -10,3 +10,6 @@ def safe_float(v, ndigits=4):
     if math.isnan(fv):
         return None
     return round(fv, ndigits)
+
+from .trend_agent import invoke_trend_agent
+from .trigger_agent import invoke_trigger_agent
