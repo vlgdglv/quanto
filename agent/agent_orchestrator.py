@@ -145,12 +145,10 @@ class InstrumentAgentOrchestrator:
             
             trend_singal = self.board.get_signal()
             if not trend_singal:
-                # logger.debug("No strategy signal yet...")
-                print("No strategy signal yet...")
+                logger.debug("No strategy signal yet...")
                 continue
             if trend_singal.is_stale:
-                # logger.debug("This strategy signal is stale. Waiting for valid strategy signal...")
-                print("This strategy signal is stale. Waiting for valid strategy signal...")
+                logger.debug("This strategy signal is stale. Waiting for valid strategy signal...")
                 continue
 
             try:
@@ -162,8 +160,8 @@ class InstrumentAgentOrchestrator:
                 
                 if self.trigger_callback:
                     await self.trigger_callback(trigger_frame.inst, trigger_frame.ts_close, trigger_out)
-                # result = await self.trade_machine.step(...)
-                                 
+                result = await self.trade_machine.step(trigger_out)
+
             except Exception as e:
                 logger.exception(f"Trigger loop failed: {e}")
                 

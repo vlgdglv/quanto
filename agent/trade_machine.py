@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, Optional, List
-import time, math
+import time, math, os
 from typing import Optional, List, Tuple, Literal, Dict, Any
 from enum import Enum, auto
+from datetime import datetime, timedelta
+import aiofiles
 
 from agent.schemas import TradePlan, Side
 from trading.models import OrderCmd, Position, Balance, MarketTicker, Instrument
@@ -39,6 +41,9 @@ class PositionState(Enum):
     OPENING = auto()       # 已生成计划，还未下单或等待成交
     CLOSING = auto()       # 正在平仓（挂了平仓单，等待成交）
     CLOSED = auto()        # 最近一笔仓位刚刚结束（可用于复盘）
+    
+    def __str__(self):
+        return self.name
 
 
 @dataclass
@@ -91,6 +96,8 @@ class TradeMachine:
         *,
         on_new_order: Callable[[NewOrderRequest], None] = None,
         on_close: Callable[[CloseRequest], None] = None,
+        state_recording: bool = True,
+        state_recording_path: Optional[str] = "data/state_machine"
     ) -> None:
         self.inst = inst
         # User must ensure initial state is NO_POSITION
@@ -107,6 +114,7 @@ class TradeMachine:
         self.trading_service = trading_service
         self.instrument_service = instrument_service
         
+        self.order_type = "market" #
         # Multiple pending order
         # self._pending_open_order_id: Optional[Dict[str, PendingOrder]] = None
         # self._pending_close_order_id: Optional[Dict[str, str, PendingOrder]] = None
@@ -114,13 +122,20 @@ class TradeMachine:
         self._pending_open_order_id: Optional[str] = None
         self._pending_close_order_id: Optional[str] = None
         
+        if state_recording:
+            self.state_recording_path = state_recording_path
+            os.makedirs(self.state_recording_path, exist_ok=True)
+            start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+            record_file_path = os.path.join(self.state_recording_path, f"tm_state_log_{start_time}.log")
+            self.record_file_path = record_file_path
+        
     async def _transition_to(self, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
         current_state = self.state
         
         if not self._is_valid_transition(current_state, target_state):
             logger.error(f"Attempted invalid transition from {current_state} to {target_state}")
         
-        # logger.info(f"[STATE CHANGE] {current_state} -> {target_state}, payload={payload}")
+        logger.info(f"[STATE CHANGE] {current_state} -> {target_state}, payload={payload}")
         
         # Maybe some hooks here
         self.state = target_state
@@ -138,14 +153,20 @@ class TradeMachine:
         pass
     
     async def _on_state_change(self, current_state: PositionState, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
-        pass
+        if self.record_file_path:
+            async with aiofiles.open(self.record_file_path, "a") as f:
+                await f.write(
+                    f"[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}][STATE CHANGE] "
+                    f"{current_state.name} -> {target_state.name}, "
+                    f"payload={payload}\n"
+                )
+
         
     def get_state(self):
         return self.state
     
     async def step(self,
-                   decisions,
-                   position: List[Position],
+                   decisions
                    ):
         if self.state == PositionState.NO_POSITION:
             await self._handle_no_position(decisions.action)
@@ -187,9 +208,9 @@ class TradeMachine:
             order_cmd = OrderCmd(
                 instId=self.inst,
                 side=side,
-                ordType="limit",
+                ordType=self.order_type, # TODO market for now
                 sz=str(target_size),
-                px=str(target_price),
+                # px=str(target_price),
                 tdMode="isolated",
                 posSide="net",
                 leverage=self.leverage
@@ -197,8 +218,11 @@ class TradeMachine:
 
             # TODO LLM Check
             logger.info("[ORDER CMD] {}".format(order_cmd))
-            order_ack = await self.trading_service.submit_limit(order_cmd, await_live=False)
-            logger.info("[ORDER ACK]".format(order_ack))
+            if self.order_type == "market":
+                order_ack = await self.trading_service.submit_market(order_cmd, await_live=False)
+            else:
+                order_ack = await self.trading_service.submit_limit(order_cmd, await_live=False)
+            logger.info("[ORDER ACK] {}".format(order_ack))
             
             if order_ack.accepted:
                 self._pending_open_order_id = order_ack.ordId
@@ -220,7 +244,6 @@ class TradeMachine:
     async def _handle_open_position(self, 
                                     action: str, # ["HOLD", "CLOSE"]
                                     ):
-
         if action.upper() == "RIDE_PROFIT":
             return
         if action.upper() == "CLOSE_SHORT" or action.upper() == "CLOSE_LONG":
@@ -260,7 +283,7 @@ class TradeMachine:
             # max_coin_size = max_notional_value / reference_price
             # target_contract_size_raw = max_coin_size / instrument.ctVal
             # return target_contract_size_raw, reference_price
-            max_contracts_raw = ((available_balance * 0.99) * self.leverage) / (instrument.ctVal * reference_price)
+            max_contracts_raw = ((available_balance * 0.5) * self.leverage) / (instrument.ctVal * reference_price)
             return max_contracts_raw, reference_price
             
         except Exception as e:
@@ -281,20 +304,21 @@ class TradeMachine:
             'state': 'live', 'lever': '5', 'pnl': '0', 'feeCcy': 'USDT', 'fee': '0',
         } 
         """
-        
-        inst_id = evt.get("instId")
+        logger.info(f"Order Feed event: {evt}")
+        data = evt['data']
+        inst_id = data.get("instId")
         if inst_id and inst_id != self.inst:
             # 不是本 instrument 的单，忽略
             return
 
-        ord_id = evt.get("ordId") or evt.get("clOrdId")
+        ord_id = data.get("ordId") or data.get("clOrdId")
         if not ord_id:
             return
 
-        state = evt.get("state") or evt.get("status")
-        side  = evt.get("side")
-        acc_fill_sz_str = evt.get("accFillSz")  # OKX 风格
-        avg_px_str      = evt.get("avgPx")
+        state = data.get("state") or data.get("status")
+        side  = data.get("side")
+        acc_fill_sz_str = data.get("accFillSz")  # OKX 风格
+        avg_px_str      = data.get("avgPx")
 
         # ------------------------
         # 1) 处理开仓挂单（OPENING）
@@ -305,7 +329,7 @@ class TradeMachine:
                 side=side,
                 acc_fill_sz_str=acc_fill_sz_str,
                 avg_px_str=avg_px_str,
-                evt=evt,
+                evt=data,
             )
             return
 
@@ -318,7 +342,7 @@ class TradeMachine:
                 side=side,
                 acc_fill_sz_str=acc_fill_sz_str,
                 avg_px_str=avg_px_str,
-                evt=evt,
+                evt=data,
             )
             return
     

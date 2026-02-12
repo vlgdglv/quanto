@@ -10,7 +10,7 @@ okx:
     paper:
       business: wss://wspap.okx.com:8443/ws/v5/business
       public:   wss://wspap.okx.com:8443/ws/v5/public
-      private:  wss://wseeapap.okx.com:8443/ws/v5/private
+      private:  wss://wspap.okx.com:8443/ws/v5/private
       
 trading:
   mode: paper                # PAPER / LIVE

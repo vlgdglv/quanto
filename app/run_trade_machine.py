@@ -73,28 +73,30 @@ async def _append_csv_row(base_dir: str | Path, emit_time: str, tf: str, inst: s
                 w.writerow(["ts", "tf", "inst", "content"])
             w.writerow(row)
 
-async def emit_signal(inst: str, emit_time, frame_time,  obj, base_dir: str | Path = AGENT_BASE_DIR):
-    print(f"{_BRIGHT_BLUE}[signal][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {obj}{_RESET}")
-    await _append_csv_row(base_dir, emit_time, "rd", inst, obj)
+async def show_trend(inst: str, frame_time, obj, base_dir: str | Path = AGENT_BASE_DIR):
+    emit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+    print(f"{_BRIGHT_BLUE}[trend][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {payload}{_RESET}")
+    # await _append_csv_row(base_dir, emit_time, "rd", inst, obj)
 
-async def emit_intent(inst: str, emit_time, frame_time, intent,  base_dir: str | Path = AGENT_BASE_DIR):
+async def show_trigger(inst: str, frame_time, intent,  base_dir: str | Path = AGENT_BASE_DIR):
+    emit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = intent.model_dump() if hasattr(intent, "model_dump") else intent
-    print(f"{_BRIGHT_GREEN}[intent][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {payload}{_RESET}")
-    await _append_csv_row(base_dir, emit_time, "intent", inst, payload)
-
+    print(f"{_BRIGHT_GREEN}[trigger][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {payload}{_RESET}")
+    # await _append_csv_row(base_dir, emit_time, "intent", inst, payload)
 
 async def main():
     REDIS_DSN   = os.getenv("REDIS_DSN",   "redis://:12345678@127.0.0.1:6379/0")
     FEATURES_STREAM = os.getenv("FEATURES_STREAM", "DOGE-USDT-SWAP")
     FEATURES_START = os.getenv("FEATURES_START", "now")
-    USE_30M_CONFIRM = bool(int(os.getenv("USE_30M_CONFIRM", False)))
     # INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
     INST = os.getenv("INSTS", "DOGE-USDT-SWAP")
 
-    x = 0.5 * 60
+    x = 0.1 * 60
     x_min_ago_ms = int((time.time() - x * 60) * 1000)
     start_id = f"{x_min_ago_ms}-0"  
     FEATURES_START = start_id
+    
     logger.info(f"Starting at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(x_min_ago_ms)/1000))}")
     # FEATURES_START = "now"
 
@@ -116,14 +118,14 @@ async def main():
     http = container.http
     account_service = AccountService(http, endpoints)
     instrument_service = InstrumentService(http, endpoints)
-    trading_service =  TradingService(
+    
+    trading_service = TradingService(
         store=OrderStore(),
         inst_service=instrument_service,
         account_service=account_service,
         logger=logger
     )
     
-    # Stupid code, need to be refactored
     orders_args = [{
         "channel":"orders",
         "instType":"SWAP",   
@@ -153,21 +155,23 @@ async def main():
     
     orders_feed.on_event(trade_machine.on_order_event)
     await orders_feed.start()
-
     data_relay = DataRelay()
+    
     worker = InstrumentAgentOrchestrator(
         inst=INST,
         data_relay=data_relay,
-        emit_signal=emit_signal,
-        emit_intent=emit_intent,
-        use_30m_confirm=USE_30M_CONFIRM,
         account_service=account_service,
-        trade_machine=trade_machine
+        trade_machine=trade_machine,
+        anchor_tf="30m",
+        driver_tf="15m",
+        trigger_tf="5m",
+        trend_callback=show_trend,
+        trigger_callback=show_trigger
     )
     
     await asyncio.gather(
         data_relay.start(subscriber),
-        worker.start()
+        worker.start(),
     )
 
     logger.info(

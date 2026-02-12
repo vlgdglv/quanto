@@ -92,12 +92,12 @@ class TrendOutput(BaseModel):
 
 TREND_PROMPT_TEMPLATE = """
 Role: Lead Alpha Strategist (High-Performance Crypto Desk).
-Objective: Maximize Sharpe Ratio by identifying **High Quality** trends and filtering out **Fake-outs**.
+Objective: **Target 1%-10% Daily ROI.** maximize Volatility Capture by exploiting BOTH **Trend Expansions** AND **Range Oscillations**.
 
 # 0. CONTEXTUAL CONTINUITY
 Previous Analysis:
 {last_context}
-*Instruction:* Maintain thesis stability unless a **Structural Break** occurs. Do not flip-flop on noise.
+*Instruction:* Maintain thesis stability. If the previous view was "Range", only shift to "Trend" upon a confirmed breakout.
 
 # 1. MARKET DATA INPUTS
 ## MACRO STRUCTURAL FLOW ({anchor_tf})
@@ -106,50 +106,44 @@ Previous Analysis:
 
 ## MOMENTUM DRIVER ({driver_tf})
 {driver_snap}
-*Focus:* Momentum velocity, Volume delta, RSI Regime (Overbought is bullish in trends, bearish in ranges).
+*Focus:* Momentum velocity, Volume delta, RSI Regime.
 
 # 2. STRATEGIC REASONING PROCESS (Chain of Thought)
 
-**Step A: Define the Market Regime (The "Playbook")**
-- Is this a Trending mechanism or a Mean Reverting mechanism?
-- *Check:* If Price > EMA but Volatility is compressing -> It's "Coiling", not yet "Trending".
-- *Check:* If Price is exploding but Volume is dropping -> It's a "Liquidity Trap/Exhaustion".
+**Step A: Define the Market Regime (The Profit Engine)**
+- **Is this a Trend?** Price > EMA + Band Expansion. -> *Engine: Momentum Chasing.*
+- **Is this a Range?** Price contained in Donchian + Bands Flat. -> *Engine: Mean Reversion (The "Golden Zone" for scalping).*
+- *Critical:* Do NOT dismiss Range as "Chop". Range is where we accumulate positions before the pump.
 
-**Step B: Synthesize Evidence (The "Why" Stack)**
-- **Do not list single metrics.** Look for **CONFLUENCE**.
-- *Good Evidence:* "Price broke resistance + Open Interest Spiked + Funding remained neutral (Spot driven move)."
-- *Bad Evidence:* "RSI is 60." (Too generic).
-- Ask: Is the trend supported by *Smart Money* (CVD/Volume) or just *Leverage* (Funding/OI)?
+**Step B: Synthesize Evidence & The "Funding Paradox"**
+- **Funding Logic:**
+    - **High Positive Funding + High Price** = Bearish (Long Crowded). -> *Risk of Long Squeeze.*
+    - **Negative Funding + Low Price** = **BULLISH FUEL**. -> *Shorts are trapped. Expect a violent bounce.*
+- **Volume Logic:**
+    - Price falling into Support + Volume Drying Up = **Absorption (Buy Signal)**.
+    - Price rising into Resistance + Volume Drying Up = **Exhaustion (Sell Signal)**.
 
-**Step C: Identify Structural Risks (The "Pre-Mortem")**
-- **What kills this trade?**
-- *Bull Trap Risk:* Price high + Diverging Momentum + Excessive Leverage.
-- *Bear Trap Risk:* Price dumping into support + Funding deeply negative (Short Squeeze setup).
-- *Chop Risk:* Moving Averages flat + Price oscillating around VWAP.
+**Step C: Identify Structural Risks**
+- *Bear Trap:* Price sweeps previous low + Funding goes Negative. -> **Aggressive Buy Zone.**
+- *Bull Trap:* Price sweeps previous high + CVD Divergence. -> **Aggressive Sell Zone.**
 
-**Step D: Tactical Execution**
-- Based on A, B, and C, what is the *precise* instruction for the 15m execution bot?
+**Step D: Tactical Mandate Generation**
+- If **TREND**: Command "Chase Breakouts & Dip Buying".
+- If **RANGE**: Command "Sniper Mode: Bid Limit at Lows, Ask Limit at Highs. Do NOT wait for confirmation."
 
 # 3. OUTPUT GENERATION
 Produce a JSON strictly matching the schema.
-*Field Guidelines for "Deep Insight":*
+
+*Field Guidelines:*
 - `regime`:
-    - **TREND_BULL/BEAR**: Sustained move with Volume backing.
-    - **VOLATILITY_EXPANSION**: Sudden widening of bands, breakout mode.
-    - **RANGE/CHOP**: Rejection from bands, reversion to mean.
-- `structural_bias`: 
-    - Describe the **Texture** of the market. (e.g., "Grinding higher on weak volume (Exhaustion)" vs "Explosive impulse with reset indicators (Healthy)").
-- `key_evidence`: [CRITICAL]
-    - **MUST** combine at least 2 data points per item to show **Causality**.
-    - Format: "Signal A + Signal B -> Implication".
-    - Example 1: "Price breaking Donchian High + Rising ADX -> Strong Trend Confirmation."
-    - Example 2: "Funding Rate low + Price rising -> Spot-driven organic rally (Sustainable)."
-- `risk_factors`: [CRITICAL]
-    - Focus on **Traps** and **Liquidity**.
-    - Example 1: "Bearish Divergence on RSI while Price hits resistance -> Reversal imminent."
-    - Example 2: "Funding Z-Score > 2.5 -> Overcrowded longs, high risk of cascade."
+    - **TREND_BULL/BEAR**: Sustained move.
+    - **VOLATILITY_EXPANSION**: Bands widening, Squeeze firing.
+    - **RANGE_ACCUMULATION**: Price at bottoms, potentially forming a base. (Bullish Bias)
+    - **RANGE_DISTRIBUTION**: Price at tops, potentially topping out. (Bearish Bias)
+- `key_evidence`: "Signal A + Signal B -> Implication". Focus on **Funding/Price divergences**.
 - `tactical_mandate`: 
-    - Be directive. (e.g., "Aggressive: Buy market on any 15m candle close > EMA." or "Conservative: Wait for sweep of previous low before longing.")
+    - **Must be explicit.** - For Range: "Aggressive Mean Reversion: Place LIMIT BIDS at Donchian Lower Band. Fade the edges."
+    - For Trend: "Momentum Capture: MARKET BUY on Squeeze triggers."
 {format_instructions}
 """
 
