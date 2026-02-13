@@ -92,7 +92,7 @@ class TradeMachine:
         instrument_service: InstrumentService,
         orders_feed: Optional[OrdersFeed] = None, 
         trading_ccy: str = "USDT",
-        leverage: int = 10, 
+        leverage: int = 5, 
         *,
         on_new_order: Callable[[NewOrderRequest], None] = None,
         on_close: Callable[[CloseRequest], None] = None,
@@ -121,6 +121,9 @@ class TradeMachine:
         
         self._pending_open_order_id: Optional[str] = None
         self._pending_close_order_id: Optional[str] = None
+
+        self._pending_open_cl_ord_id: Optional[str] = None
+        self._pending_close_cl_ord_id: Optional[str] = None
         
         if state_recording:
             self.state_recording_path = state_recording_path
@@ -129,11 +132,12 @@ class TradeMachine:
             record_file_path = os.path.join(self.state_recording_path, f"tm_state_log_{start_time}.log")
             self.record_file_path = record_file_path
         
-    async def _transition_to(self, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
+    def _transition_to(self, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
         current_state = self.state
         
         if not self._is_valid_transition(current_state, target_state):
-            logger.error(f"Attempted invalid transition from {current_state} to {target_state}")
+            logger.warning(f"Attempted invalid transition from {current_state} to {target_state}, stoped.")
+            return
         
         logger.info(f"[STATE CHANGE] {current_state} -> {target_state}, payload={payload}")
         
@@ -143,19 +147,24 @@ class TradeMachine:
             self._update_position_data(payload)
             
         # Post hook for state change
-        await self._on_state_change(current_state, target_state, payload)
+        self._on_state_change(current_state, target_state, payload)
         
     def _is_valid_transition(self, current_state: PositionState, target_state: PositionState):
-        # For simplicity, assume all transitions are valid
-        return True
+        # raced
+        if current_state == target_state:
+            return False
+        if current_state == PositionState.OPEN and target_state == PositionState.OPENING:
+            return False
+        if current_state == PositionState.CLOSED and target_state == PositionState.CLOSING:
+            return False
     
     def _update_position_data(self, payload: Dict[str, Any]):
         pass
     
-    async def _on_state_change(self, current_state: PositionState, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
+    def _on_state_change(self, current_state: PositionState, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
         if self.record_file_path:
-            async with aiofiles.open(self.record_file_path, "a") as f:
-                await f.write(
+            with open(self.record_file_path, "a") as f:
+                f.write(
                     f"[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}][STATE CHANGE] "
                     f"{current_state.name} -> {target_state.name}, "
                     f"payload={payload}\n"
@@ -203,6 +212,8 @@ class TradeMachine:
             marker_price: MarketTicker = await self.instrument_service.get_inst_price(self.inst)
             instrument: Instrument = await self.instrument_service.get_or_refresh(self.inst)
             target_size, target_price = self._calculate_order_size(available_balance_str, marker_price, instrument,side)
+            cl_ord_id = self.trading_service.gen_clOrdId()
+            self._pending_open_cl_ord_id = cl_ord_id
 
             # trading service 会对精度和step兜底
             order_cmd = OrderCmd(
@@ -211,6 +222,7 @@ class TradeMachine:
                 ordType=self.order_type, # TODO market for now
                 sz=str(target_size),
                 # px=str(target_price),
+                clOrdId=cl_ord_id,
                 tdMode="isolated",
                 posSide="net",
                 leverage=self.leverage
@@ -218,22 +230,24 @@ class TradeMachine:
 
             # TODO LLM Check
             logger.info("[ORDER CMD] {}".format(order_cmd))
+            
             if self.order_type == "market":
                 order_ack = await self.trading_service.submit_market(order_cmd, await_live=False)
             else:
                 order_ack = await self.trading_service.submit_limit(order_cmd, await_live=False)
             logger.info("[ORDER ACK] {}".format(order_ack))
-            
             if order_ack.accepted:
-                self._pending_open_order_id = order_ack.ordId
+                self._pending_open_order_id = str(order_ack.ordId)
+                print("Setting orderid: ", self._pending_open_order_id)
                 state_change_payload = {
                     "side": side,
                     "size": target_size,
                     "opened_ts": None
                 }
-                await self._transition_to(PositionState.OPENING, state_change_payload)
+                self._transition_to(PositionState.OPENING, state_change_payload)
             else:
                 logger.warning(f"Failed to submit order: {order_ack}")
+                self._pending_open_cl_ord_id = None
 
             logger.debug(f"New Order submitted: {order_ack}")
         
@@ -249,11 +263,14 @@ class TradeMachine:
         if action.upper() == "CLOSE_SHORT" or action.upper() == "CLOSE_LONG":
             side = "sell" if self.postion_state.side.lower() == "buy" else "buy"
             try:
+                cl_ord_id = self.trading_service.gen_clOrdId()
+                self._pending_close_cl_ord_id = cl_ord_id
                 order_cmd = OrderCmd(
                     instId=self.inst,
                     side=side,
                     ordType="market",
                     sz=str(self.postion_state.size),
+                    clOrdId=cl_ord_id,
                     tdMode="isolated",
                     posSide="net",
                 )
@@ -261,9 +278,10 @@ class TradeMachine:
                 logger.info(f"Close Market Order submitted: {order_ack}")
                 if order_ack.accepted:
                     self._pending_close_order_id = order_ack.ordId
-                    await self._transition_to(PositionState.CLOSING)
+                    self._transition_to(PositionState.CLOSING)
                 else:
                     logger.warning(f"Failed to submit order: {order_ack}")
+                    self._pending_close_cl_ord_id = None
                 # self._on_close(CloseRequest(inst=self.inst, reason="TradeMachine Decision"))
             except Exception as e:
                 logger.error(f"Error processing OPEN action CLOSE: {e}")
@@ -305,25 +323,34 @@ class TradeMachine:
         } 
         """
         logger.info(f"Order Feed event: {evt}")
-        data = evt['data']
+        data = evt['data'][0]
         inst_id = data.get("instId")
         if inst_id and inst_id != self.inst:
-            # 不是本 instrument 的单，忽略
+            logger.info("Not this order...")
             return
 
-        ord_id = data.get("ordId") or data.get("clOrdId")
-        if not ord_id:
-            return
+        ord_id = str(data.get("ordId")) or str(data.get("clOrdId"))
+        cl_ord_id = str(data.get("clOrdId", ""))
 
         state = data.get("state") or data.get("status")
         side  = data.get("side")
-        acc_fill_sz_str = data.get("accFillSz")  # OKX 风格
+        acc_fill_sz_str = data.get("accFillSz")
         avg_px_str      = data.get("avgPx")
-
+        print("Get instd id and order id: ", inst_id, data.get("ordId"), "state: ", state)
+        print("ord_id           :", ord_id)
+        print("pending open id  :", self._pending_open_order_id)
+        
         # ------------------------
         # 1) 处理开仓挂单（OPENING）
         # ------------------------
-        if ord_id == self._pending_open_order_id:
+        is_my_open_order = (
+            (ord_id and ord_id == self._pending_open_order_id) or 
+            (cl_ord_id and cl_ord_id == self._pending_open_cl_ord_id)
+        )
+        if is_my_open_order:
+            if not self._pending_open_order_id and ord_id:
+                self._pending_open_order_id = ord_id
+
             await self._handle_open_order_event(
                 state=state,
                 side=side,
@@ -336,7 +363,11 @@ class TradeMachine:
         # ------------------------
         # 2) 处理平仓挂单（CLOSING）
         # ------------------------
-        if ord_id == self._pending_close_order_id:
+        is_my_close_order = (
+            (ord_id and ord_id == self._pending_close_order_id) or 
+            (cl_ord_id and cl_ord_id == self._pending_close_cl_ord_id)
+        )
+        if is_my_close_order:
             await self._handle_close_order_event(
                 state=state,
                 side=side,
@@ -367,7 +398,7 @@ class TradeMachine:
                 "size": float(filled_sz) if filled_sz else self.postion_state.size,
                 "opened_ts": time.time(),
             }
-            await self._transition_to(PositionState.OPEN, state_change_payload)
+            self._transition_to(PositionState.OPEN, state_change_payload)
             
         elif state in CANCELED_STATES | REJECTED_STATES:
             logger.warning(
@@ -379,7 +410,7 @@ class TradeMachine:
                 "size": None,
                 "opened_ts": None
             }
-            await self._transition_to(PositionState.NO_POSITION, state_change_payload)
+            self._transition_to(PositionState.NO_POSITION, state_change_payload)
             self._pending_open_order_id = None
         else:
             logger.debug(f"Open order still pending, state={state}")
@@ -404,7 +435,7 @@ class TradeMachine:
                 "size": None,
                 "closed_ts": time.time()
             }
-            await self._transition_to(PositionState.NO_POSITION, state_change_payload)
+            self._transition_to(PositionState.NO_POSITION, state_change_payload)
             
             self._pending_close_order_id = None
 
@@ -413,7 +444,7 @@ class TradeMachine:
                 f"Close order not filled (state={state}), keep position OPEN, evt={evt}"
             )
             # 平仓失败：位置依然是 OPEN
-            await self._transition_to(PositionState.OPEN)
+            self._transition_to(PositionState.OPEN)
             self._pending_close_order_id = None
         else:
             # live / partially_filled 等待继续成交
