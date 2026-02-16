@@ -508,10 +508,9 @@ def kyle_lambda_update(state: KyleLambdaState,
     state.sxy = (1 - a) * state.sxy + a * (q * dm)
     if state.sxx >= state.min_sxx:
         est = state.sxy / state.sxx if state.sxx > 0 else math.nan
-        state.value = max(0.0, est) if (state.nonneg and math.isfinite(est)) else est
+        state.value = est
     else:
-        state.value = math.nan  # 热身期间不报数
-
+        state.value = math.nan
     state.last_mid = float(mid)
     return state.value
 
@@ -885,7 +884,7 @@ class FeatureEnginePD:
             cvd_update(state.cvd, delta)
             vpin_update(state.vpin, delta)
             if state.last_mid is not None:
-                    (state.kyle, state.last_mid, delta)
+                kyle_lambda_update(state.kyle, state.last_mid, delta)
             self.updates += 1
 
     # ----------- candles -> features -----------
@@ -983,6 +982,12 @@ class FeatureEnginePD:
         state = self._get_shared_state(instId)
         frs = state.funding
 
+        def _annualize_funding_rate(rate_8h: float) -> float:
+            """
+            rate * 3 * 365
+            """
+            return rate_8h * 3 * 365 * 100
+        
         for _, r in df_funding_rate.iterrows():
 
             ts = int(r.get("ts", r.get("timestamp", 0)) or 0)
@@ -1000,14 +1005,31 @@ class FeatureEnginePD:
             if pd.notna(fr):
                 frs.funding_rate = fr
                 ema_update(frs.fr_ema, fr)
+                frs.annualized = _annualize_funding_rate(float(frs.funding_rate))
+                
             if pd.notna(prem):
                 frs.premium = prem
                 _ = ewma_var_update(frs.prem_rv, prem)
                 ema_update(frs.prem_ema, prem)
-                if frs.prem_rv.mean is not None and frs.prem_rv.var is not None and frs.prem_rv.var >= 0:
-                    mu, var = frs.prem_rv.mean, frs.prem_rv.var
+                
+                mu = frs.prem_rv.mean if frs.prem_rv.mean is not None else frs.prem_ema.value
+                var = frs.prem_rv.var if frs.prem_rv.var is not None else 0.0
+                
+                if mu is not None and var is not None and var >= 0:
                     std = np.sqrt(max(var, 0.0))
-                    frs.premium_z = (prem - mu) / std if std > 0 else np.nan
+                    effective_std = max(std, 1e-5) 
+                    
+                    if std < 1e-8: 
+                        frs.premium_z = 0.0
+                    else:
+                        raw_z = (prem - mu) / effective_std
+                        frs.premium_z = max(-5.0, min(5.0, raw_z))
+                else:
+                    frs.premium_z = 0.0
+                # if frs.prem_rv.mean is not None and frs.prem_rv.var is not None and frs.prem_rv.var >= 0:
+                #     mu, var = frs.prem_rv.mean, frs.prem_rv.var
+                #     std = np.sqrt(max(var, 0.0))
+                #     frs.premium_z = (prem - mu) / std if std > 0 else np.nan
 
             if pd.notna(min_fr): frs.min_funding_rate = min_fr
             if pd.notna(max_fr): frs.max_funding_rate = max_fr

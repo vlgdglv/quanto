@@ -123,5 +123,5 @@ async def ping_okx():
             print(r.status, await r.text())
 
 if __name__ == "__main__":
-    asyncio.run(test_instruments())
-    # asyncio.run(test_accounts())
+    # asyncio.run(test_instruments())
+    asyncio.run(test_accounts())

@@ -170,6 +170,8 @@ class TradeMachine:
                     f"payload={payload}\n"
                 )
 
+    def has_position(self):
+        return self.state == PositionState.OPEN or self.state == PositionState.OPENING
         
     def get_state(self):
         return self.state
@@ -238,7 +240,6 @@ class TradeMachine:
             logger.info("[ORDER ACK] {}".format(order_ack))
             if order_ack.accepted:
                 self._pending_open_order_id = str(order_ack.ordId)
-                print("Setting orderid: ", self._pending_open_order_id)
                 state_change_payload = {
                     "side": side,
                     "size": target_size,
@@ -301,7 +302,7 @@ class TradeMachine:
             # max_coin_size = max_notional_value / reference_price
             # target_contract_size_raw = max_coin_size / instrument.ctVal
             # return target_contract_size_raw, reference_price
-            max_contracts_raw = ((available_balance * 0.5) * self.leverage) / (instrument.ctVal * reference_price)
+            max_contracts_raw = ((available_balance * 0.8) * self.leverage) / (instrument.ctVal * reference_price)
             return max_contracts_raw, reference_price
             
         except Exception as e:
@@ -336,9 +337,9 @@ class TradeMachine:
         side  = data.get("side")
         acc_fill_sz_str = data.get("accFillSz")
         avg_px_str      = data.get("avgPx")
-        print("Get instd id and order id: ", inst_id, data.get("ordId"), "state: ", state)
-        print("ord_id           :", ord_id)
-        print("pending open id  :", self._pending_open_order_id)
+        # print("Get instd id and order id: ", inst_id, data.get("ordId"), "state: ", state)
+        # print("ord_id           :", ord_id)
+        # print("pending open id  :", self._pending_open_order_id)
         
         # ------------------------
         # 1) 处理开仓挂单（OPENING）

@@ -77,13 +77,13 @@ async def show_trend(inst: str, frame_time, obj, base_dir: str | Path = AGENT_BA
     emit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
     print(f"{_BRIGHT_BLUE}[trend][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {payload}{_RESET}")
-    # await _append_csv_row(base_dir, emit_time, "rd", inst, obj)
+    await _append_csv_row(base_dir, emit_time, "trend", inst, payload)
 
 async def show_trigger(inst: str, frame_time, intent,  base_dir: str | Path = AGENT_BASE_DIR):
     emit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = intent.model_dump() if hasattr(intent, "model_dump") else intent
     print(f"{_BRIGHT_GREEN}[trigger][{inst}][emit_time:{emit_time}][frame_time:{datetime.strptime(frame_time, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")}] {payload}{_RESET}")
-    # await _append_csv_row(base_dir, emit_time, "intent", inst, payload)
+    await _append_csv_row(base_dir, emit_time, "trigger", inst, payload)
 
 async def main():
     REDIS_DSN   = os.getenv("REDIS_DSN",   "redis://:12345678@127.0.0.1:6379/0")

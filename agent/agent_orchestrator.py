@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List, Callable
 
 from agent.schemas import FeatureFrame, RegimeSignal, DirectionSignal, TF, Side
 from agent.trade_machine import TradeMachine, PositionState
-from agent.agent_hub import invoke_trend_agent, invoke_trigger_agent
+from agent.agent_hub import invoke_trend_agent, invoke_trigger_agent, invoke_entry_agent, invoke_exit_agent
 from agent.agent_hub.trend_agent import TrendOutput
 
 
@@ -156,7 +156,23 @@ class InstrumentAgentOrchestrator:
                     Invoke trigger agent        
                 """
                 # snap15 = build_agent_snapshot(trigger_frame)
-                trigger_out = await invoke_trigger_agent(trend_singal.payload, trigger_frame, position)
+                # trigger_out = await invoke_trigger_agent(trend_singal.payload, trigger_frame, position)
+                if self.trade_machine is not None:
+                    if self.trade_machine.has_position():
+                        logger.info(f"Position exists for {self.inst}")
+                        print(position)
+                        # if len(position) == 0:
+                        #     logger.warning(f"Position exists but no position found in account service for {self.inst}")
+                        #     continue
+                        trigger_out = await invoke_exit_agent(trend_singal.payload, trigger_frame, position)
+                    else:
+                        # if len(position) > 0:
+                        #     print(position)
+                        #     logger.warning(f"No position exists but position found in account service for {self.inst}")
+                        #     continue
+                        trigger_out = await invoke_entry_agent(trend_singal.payload, trigger_frame)
+                else:
+                    trigger_out = await invoke_trigger_agent(trend_singal.payload, trigger_frame, position)
                 
                 if self.trigger_callback:
                     await self.trigger_callback(trigger_frame.inst, trigger_frame.ts_close, trigger_out)
