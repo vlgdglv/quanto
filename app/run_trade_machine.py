@@ -92,7 +92,7 @@ async def main():
     # INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
     INST = os.getenv("INSTS", "DOGE-USDT-SWAP")
 
-    x = 1 * 60
+    x = 4 * 60
     x_min_ago_ms = int((time.time() - x * 60) * 1000)
     start_id = f"{x_min_ago_ms}-0"  
     FEATURES_START = start_id
@@ -162,9 +162,9 @@ async def main():
         data_relay=data_relay,
         account_service=account_service,
         trade_machine=trade_machine,
-        anchor_tf="30m",
-        driver_tf="15m",
-        trigger_tf="5m",
+        anchor_tf="4H",
+        driver_tf="1H",
+        trigger_tf="15m",
         trend_callback=show_trend,
         trigger_callback=show_trigger
     )

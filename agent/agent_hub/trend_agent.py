@@ -53,99 +53,189 @@ def build_snapshot_for_trend(frame: FeatureFrame) -> FeatureFrame:
     )
 
 
-class TrendOutput(BaseModel):
-    regime: Literal[
-        "TREND_BULL", 
-        "TREND_BEAR", 
-        "RANGE_BOUND", 
-        "VOLATILITY_EXPANSION",
-        "CONFLICT_CHOP"
-    ] = Field(description="The dominant market structure class.")
+# class TrendOutput(BaseModel):
+#     regime: Literal[
+#         "TREND_BULL", 
+#         "TREND_BEAR", 
+#         "RANGE_BOUND", 
+#         "VOLATILITY_EXPANSION",
+#         "CONFLICT_CHOP"
+#     ] = Field(description="The dominant market structure class.")
     
-    structural_bias: str = Field(
-        description="A concise summary of what the 4H/1H indicators superficially suggest (e.g., '4H EMAs are Bullish, but 1H Momentum is diverging')."
+#     structural_bias: str = Field(
+#         description="A concise summary of what the 4H/1H indicators superficially suggest (e.g., '4H EMAs are Bullish, but 1H Momentum is diverging')."
+#     )
+
+#     key_evidence: List[str] = Field(
+#         description="List of 2-3 key metrics from the input that support this view (e.g., 'Mom Slope > 0.5', 'Price > Donchian Mid')."
+#     )
+#     risk_factors: List[str] = Field(
+#         description="Potential traps or negative signs (e.g., 'Funding Z-score > 2.0 suggests overcrowding')."
+#     )
+#     confidence_score: float = Field(
+#         description="0.0 to 1.0. How clear is the data?"
+#     )
+#     confidence_reasoning: str = Field(
+#         description="Why is the confidence high or low? (e.g., 'High because 4H and 1H strictly align', or 'Low because Price contradicts Momentum')."
+#     )
+
+#     tactical_mandate: str = Field(
+#         description="The strategic command for the 15m bot. (e.g., 'ONLY Long on dips to EMA', 'Fade breakouts', 'Stay Flat')."
+#     )
+#     confirmation_trigger: str = Field(
+#         description="What phenomenon in 15m would CONFIRM this view is correct? (e.g., 'OFI turns positive while Price holds EMA')."
+#     )
+#     invalidation_trigger: str = Field(
+#         description="What phenomenon would INVALIDATE this view and require an abort? (e.g., 'Price closes below 4H EMA Slow', 'Funding Rate spikes')."
+#     )
+
+
+# TREND_PROMPT_TEMPLATE = """
+# Role: Lead Alpha Strategist (High-Performance Crypto Desk).
+# Objective: **Target 1%-10% Daily ROI.** maximize Volatility Capture by exploiting BOTH **Trend Expansions** AND **Range Oscillations**.
+
+# # 0. CONTEXTUAL CONTINUITY
+# Previous Analysis:
+# {last_context}
+# *Instruction:* Maintain thesis stability. If the previous view was "Range", only shift to "Trend" upon a confirmed breakout.
+
+# # 1. MARKET DATA INPUTS
+# ## MACRO STRUCTURAL FLOW ({anchor_tf})
+# {anchor_snap}
+# *Focus:* Market Structure (Higher Highs/Lows), Donchian Width (Volatility cycle), Funding/OI (Crowding).
+
+# ## MOMENTUM DRIVER ({driver_tf})
+# {driver_snap}
+# *Focus:* Momentum velocity, Volume delta, RSI Regime.
+
+# # 2. STRATEGIC REASONING PROCESS (Chain of Thought)
+
+# **Step A: Define the Market Regime (The Profit Engine)**
+# - **Is this a Trend?** Price > EMA + Band Expansion. -> *Engine: Momentum Chasing.*
+# - **Is this a Range?** Price contained in Donchian + Bands Flat. -> *Engine: Mean Reversion (The "Golden Zone" for scalping).*
+# - *Critical:* Do NOT dismiss Range as "Chop". Range is where we accumulate positions before the pump.
+
+# **Step B: Synthesize Evidence & The "Funding Paradox"**
+# - **Funding Logic:**
+#     - **High Positive Funding + High Price** = Bearish (Long Crowded). -> *Risk of Long Squeeze.*
+#     - **Negative Funding + Low Price** = **BULLISH FUEL**. -> *Shorts are trapped. Expect a violent bounce.*
+# - **Volume Logic:**
+#     - Price falling into Support + Volume Drying Up = **Absorption (Buy Signal)**.
+#     - Price rising into Resistance + Volume Drying Up = **Exhaustion (Sell Signal)**.
+
+# **Step C: Identify Structural Risks**
+# - *Bear Trap:* Price sweeps previous low + Funding goes Negative. -> **Aggressive Buy Zone.**
+# - *Bull Trap:* Price sweeps previous high + CVD Divergence. -> **Aggressive Sell Zone.**
+
+# **Step D: Tactical Mandate Generation**
+# - If **TREND**: Command "Chase Breakouts & Dip Buying".
+# - If **RANGE**: Command "Sniper Mode: Bid Limit at Lows, Ask Limit at Highs. Do NOT wait for confirmation."
+
+# # 3. OUTPUT GENERATION
+# Produce a JSON strictly matching the schema.
+
+# *Field Guidelines:*
+# - `regime`:
+#     - **TREND_BULL/BEAR**: Sustained move.
+#     - **VOLATILITY_EXPANSION**: Bands widening, Squeeze firing.
+#     - **RANGE_ACCUMULATION**: Price at bottoms, potentially forming a base. (Bullish Bias)
+#     - **RANGE_DISTRIBUTION**: Price at tops, potentially topping out. (Bearish Bias)
+# - `key_evidence`: "Signal A + Signal B -> Implication". Focus on **Funding/Price divergences**.
+# - `tactical_mandate`: 
+#     - **Must be explicit.** - For Range: "Aggressive Mean Reversion: Place LIMIT BIDS at Donchian Lower Band. Fade the edges."
+#     - For Trend: "Momentum Capture: MARKET BUY on Squeeze triggers."
+# {format_instructions}
+# """
+
+class TrendOutput(BaseModel):
+    # 1. 细化市场相位：不再只是简单的 Trend/Range
+    regime: Literal[
+        "TREND_BULL_IMPULSE",       # 强势上涨中 (只做多)
+        "TREND_BEAR_IMPULSE",       # 强势下跌中 (只做空)
+        "RANGE_ACCUMULATION",       # 震荡筑底 (偏多，低吸)
+        "RANGE_DISTRIBUTION",       # 震荡筑顶 (偏空，高抛)
+        "VOLATILITY_COIL",          # 极度收敛，即将变盘 (双向埋伏)
+        "CHOP_DEATH_ZONE"           # 垃圾时间 (禁止交易)
+    ] = Field(description="The precise phase of the market cycle.")
+    
+    # 2. 强制方向性偏见
+    structural_bias: Literal["BULLISH", "BEARISH", "NEUTRAL"] = Field(
+        description="Even in a range, which side has the pressure advantage?"
     )
 
-    key_evidence: List[str] = Field(
-        description="List of 2-3 key metrics from the input that support this view (e.g., 'Mom Slope > 0.5', 'Price > Donchian Mid')."
-    )
-    risk_factors: List[str] = Field(
-        description="Potential traps or negative signs (e.g., 'Funding Z-score > 2.0 suggests overcrowding')."
-    )
-    confidence_score: float = Field(
-        description="0.0 to 1.0. How clear is the data?"
-    )
-    confidence_reasoning: str = Field(
-        description="Why is the confidence high or low? (e.g., 'High because 4H and 1H strictly align', or 'Low because Price contradicts Momentum')."
-    )
-
+    # 3. 数字化战场 (给 Hunter 的地图)
+    target_support_level: float = Field(description="The price level to bid/long (e.g., Donchian Lower or EMA).")
+    target_resistance_level: float = Field(description="The price level to ask/short.")
+    
+    key_evidence: List[str] = Field(description="Synthesized logic: 'Price > EMA + Positive Funding -> Spot Demand'.")
+    
+    # 4. 给 Hunter 的具体指令
     tactical_mandate: str = Field(
-        description="The strategic command for the 15m bot. (e.g., 'ONLY Long on dips to EMA', 'Fade breakouts', 'Stay Flat')."
+        description="Specific instruction. E.g., 'Aggressive Breakout: Buy if Price > 0.10' or 'Passive: Limit Buy at 0.098'."
     )
-    confirmation_trigger: str = Field(
-        description="What phenomenon in 15m would CONFIRM this view is correct? (e.g., 'OFI turns positive while Price holds EMA')."
-    )
-    invalidation_trigger: str = Field(
-        description="What phenomenon would INVALIDATE this view and require an abort? (e.g., 'Price closes below 4H EMA Slow', 'Funding Rate spikes')."
-    )
-
-
+    
+    confidence_score: float = Field(description="0.0-1.0. Reliability of the setup.")
+    
+    
 TREND_PROMPT_TEMPLATE = """
-Role: Lead Alpha Strategist (High-Performance Crypto Desk).
-Objective: **Target 1%-10% Daily ROI.** maximize Volatility Capture by exploiting BOTH **Trend Expansions** AND **Range Oscillations**.
+Role: Chief Investment Officer (Crypto High-Frequency Desk).
+Objective: **PREDICT THE NEXT EXPANSION.** We do not get paid to describe the past. We get paid to position for the future.
 
-# 0. CONTEXTUAL CONTINUITY
-Previous Analysis:
-{last_context}
-*Instruction:* Maintain thesis stability. If the previous view was "Range", only shift to "Trend" upon a confirmed breakout.
+# 0. CONTEXT CHECK
+Previous View: {last_context}
+*Instruction:* Be skeptical. If the market has been "Range" for >4 hours, assume a Breakout is imminent (Coiling).
 
-# 1. MARKET DATA INPUTS
-## MACRO STRUCTURAL FLOW ({anchor_tf})
+# 1. MARKET INTELLIGENCE
+## STRUCTURAL FLOW ({anchor_tf})
 {anchor_snap}
-*Focus:* Market Structure (Higher Highs/Lows), Donchian Width (Volatility cycle), Funding/OI (Crowding).
+*Critical Check:*
+- **Donchian Width:** Contracting = Energy Building (Coil). Expanding = Trend Running.
+- **OI vs Price:** Price Flat + OI Rising = **Big Move Loading.**
 
-## MOMENTUM DRIVER ({driver_tf})
+## MOMENTUM & SENTIMENT ({driver_tf})
 {driver_snap}
-*Focus:* Momentum velocity, Volume delta, RSI Regime.
+*Critical Check:*
+- **Funding Anomalies:**
+  - Price dropping + Funding dropping (Negative) = **Bearish Spot Selling.**
+  - Price dropping + Funding RISING = **Bullish Absorption (Limit buying).**
 
-# 2. STRATEGIC REASONING PROCESS (Chain of Thought)
+# 2. STRATEGIC DEDUCTION (The "Why" Chain)
 
-**Step A: Define the Market Regime (The Profit Engine)**
-- **Is this a Trend?** Price > EMA + Band Expansion. -> *Engine: Momentum Chasing.*
-- **Is this a Range?** Price contained in Donchian + Bands Flat. -> *Engine: Mean Reversion (The "Golden Zone" for scalping).*
-- *Critical:* Do NOT dismiss Range as "Chop". Range is where we accumulate positions before the pump.
+**Step A: Diagnose the Phase (The Regime)**
+- **IMPULSE (Trend):** Price > EMA + Bands Expanding + RSI not diverting. -> *Ride the Wave.*
+- **COIL (Squeeze):** Volatility is dead. Bands are tight. -> *Prepare for Explosion.*
+- **ACCUMULATION (Range):** Price holding Support. Low Volume selling. -> *Bias Long.*
+- **DISTRIBUTION (Range):** Price failing Resistance. Low Volume rallies. -> *Bias Short.*
+- **CHOP (Death):** No clear pattern. -> *System Sleep.*
 
-**Step B: Synthesize Evidence & The "Funding Paradox"**
-- **Funding Logic:**
-    - **High Positive Funding + High Price** = Bearish (Long Crowded). -> *Risk of Long Squeeze.*
-    - **Negative Funding + Low Price** = **BULLISH FUEL**. -> *Shorts are trapped. Expect a violent bounce.*
-- **Volume Logic:**
-    - Price falling into Support + Volume Drying Up = **Absorption (Buy Signal)**.
-    - Price rising into Resistance + Volume Drying Up = **Exhaustion (Sell Signal)**.
+**Step B: Define the "Kill Zone" (The Where)**
+- Identify the *exact* price level where the edge is highest.
+- If Range: The edge is the Donchian Band.
+- If Trend: The edge is the EMA (Mean Reversion).
 
-**Step C: Identify Structural Risks**
-- *Bear Trap:* Price sweeps previous low + Funding goes Negative. -> **Aggressive Buy Zone.**
-- *Bull Trap:* Price sweeps previous high + CVD Divergence. -> **Aggressive Sell Zone.**
+**Step C: The "Smart Money" Test**
+- Are whales trapping retail?
+- *Example:* If Price swept a Low but immediately reclaimed it -> **Bear Trap (Strong Buy).**
 
-**Step D: Tactical Mandate Generation**
-- If **TREND**: Command "Chase Breakouts & Dip Buying".
-- If **RANGE**: Command "Sniper Mode: Bid Limit at Lows, Ask Limit at Highs. Do NOT wait for confirmation."
+**Step D: Formulate the Mandate**
+- Translating strategy into execution orders.
+- *Format:* "[Aggression Level] [Strategy]: [Trigger]"
 
 # 3. OUTPUT GENERATION
 Produce a JSON strictly matching the schema.
 
 *Field Guidelines:*
-- `regime`:
-    - **TREND_BULL/BEAR**: Sustained move.
-    - **VOLATILITY_EXPANSION**: Bands widening, Squeeze firing.
-    - **RANGE_ACCUMULATION**: Price at bottoms, potentially forming a base. (Bullish Bias)
-    - **RANGE_DISTRIBUTION**: Price at tops, potentially topping out. (Bearish Bias)
-- `key_evidence`: "Signal A + Signal B -> Implication". Focus on **Funding/Price divergences**.
-- `tactical_mandate`: 
-    - **Must be explicit.** - For Range: "Aggressive Mean Reversion: Place LIMIT BIDS at Donchian Lower Band. Fade the edges."
-    - For Trend: "Momentum Capture: MARKET BUY on Squeeze triggers."
+- `regime`: Select strictly from [TREND_BULL_IMPULSE, TREND_BEAR_IMPULSE, RANGE_ACCUMULATION, RANGE_DISTRIBUTION, VOLATILITY_COIL, CHOP_DEATH_ZONE].
+- `structural_bias`: Must be BULLISH or BEARISH unless it is completely dead CHOP.
+- `target_support_level`: Provide a specific price (float) from the data.
+- `target_resistance_level`: Provide a specific price (float) from the data.
+- `tactical_mandate`:
+    - If COIL: "Stalk Breakout: Market Entry on Band breach."
+    - If ACCUMULATION: "Sniper Long: Limit Bid at Support."
+
 {format_instructions}
 """
+
 
 def get_trend_agent():
     return create_agent_chain(TrendOutput, TREND_PROMPT_TEMPLATE, model_name="gpt-4o")

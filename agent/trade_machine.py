@@ -49,7 +49,7 @@ class PositionState(Enum):
 @dataclass
 class PositionPlan:
     inst: str
-    side: Optional[Side] = None
+    side: Optional[str] = None
     size: float = None
 
     created_ts: float = None    
@@ -125,6 +125,8 @@ class TradeMachine:
         self._pending_open_cl_ord_id: Optional[str] = None
         self._pending_close_cl_ord_id: Optional[str] = None
         
+        self.last_state = None
+        
         if state_recording:
             self.state_recording_path = state_recording_path
             os.makedirs(self.state_recording_path, exist_ok=True)
@@ -151,15 +153,24 @@ class TradeMachine:
         
     def _is_valid_transition(self, current_state: PositionState, target_state: PositionState):
         # raced
-        if current_state == target_state:
-            return False
+        # if current_state == target_state:
+        #     return False
         if current_state == PositionState.OPEN and target_state == PositionState.OPENING:
             return False
         if current_state == PositionState.CLOSED and target_state == PositionState.CLOSING:
             return False
+        if current_state == PositionState.NO_POSITION and target_state == PositionState.CLOSING:
+            return False
+        
+        return True
     
     def _update_position_data(self, payload: Dict[str, Any]):
-        pass
+        self.postion_state.side = payload["side"]
+        self.postion_state.size = payload["size"]
+        if "opened_ts" in payload:
+            self.postion_state.opened_ts = payload["opened_ts"]
+        if "closed_ts" in payload:
+            self.postion_state.closed_ts = payload["closed_ts"]    
     
     def _on_state_change(self, current_state: PositionState, target_state: PositionState, payload: Optional[Dict[str, Any]] = None):
         if self.record_file_path:
@@ -176,9 +187,13 @@ class TradeMachine:
     def get_state(self):
         return self.state
     
+    def get_last_trigger_output(self):
+        return self.last_trigger_output
+    
     async def step(self,
                    decisions
                    ):
+        self.last_trigger_output = decisions
         if self.state == PositionState.NO_POSITION:
             await self._handle_no_position(decisions.action)
         elif self.state == PositionState.OPEN:
@@ -186,9 +201,10 @@ class TradeMachine:
         else:
             raise NotImplementedError
         
-    async def _handle_no_position(self, 
-                                  action: str,  # ["BUY", "SELL", "SKIP"]
-                                 ):
+    async def _handle_no_position(
+        self, 
+        action: str,  # ["BUY", "SELL", "SKIP"]
+    ):
         
         if action == "STALK":
             return
@@ -264,6 +280,7 @@ class TradeMachine:
         if action.upper() == "CLOSE_SHORT" or action.upper() == "CLOSE_LONG":
             side = "sell" if self.postion_state.side.lower() == "buy" else "buy"
             try:
+                logger.info(f"Issue closing with size: {str(self.postion_state.size)}")
                 cl_ord_id = self.trading_service.gen_clOrdId()
                 self._pending_close_cl_ord_id = cl_ord_id
                 order_cmd = OrderCmd(
@@ -391,21 +408,22 @@ class TradeMachine:
         FILLED_STATES = {"filled", "partially_filled"}
         CANCELED_STATES = {"canceled", "canceled_by_system"}
         REJECTED_STATES = {"rejected"}
-
+        
         if state in FILLED_STATES:
-            filled_sz = float(acc_fill_sz_str) if acc_fill_sz_str else float("0")
-            state_change_payload = {
-                "side": side or self.postion_state.side,
-                "size": float(filled_sz) if filled_sz else self.postion_state.size,
-                "opened_ts": time.time(),
-            }
-            self._transition_to(PositionState.OPEN, state_change_payload)
-            
+            if state == "filled":
+                filled_sz = float(acc_fill_sz_str) if acc_fill_sz_str else float("0")
+                state_change_payload = {
+                    "side": side or self.postion_state.side,
+                    "size": str(filled_sz),
+                    "opened_ts": time.time(),
+                }
+                self._transition_to(PositionState.OPEN, state_change_payload)
+            else:
+                pass
         elif state in CANCELED_STATES | REJECTED_STATES:
             logger.warning(
                 f"Open order failed or canceled, state={state}, evt={evt}"
             )
-            # 回到空仓
             state_change_payload = {
                 "side": None,
                 "size": None,
@@ -444,7 +462,6 @@ class TradeMachine:
             logger.warning(
                 f"Close order not filled (state={state}), keep position OPEN, evt={evt}"
             )
-            # 平仓失败：位置依然是 OPEN
             self._transition_to(PositionState.OPEN)
             self._pending_close_order_id = None
         else:

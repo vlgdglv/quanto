@@ -8,6 +8,7 @@ from trading.services.instrument_service import InstrumentService
 from trading.services.account_service import AccountService
 from trading.services.endpoints import make_endpoints_from_cfg
 from utils import logger, load_cfg
+from agent.agent_hub import format_position_str_for_prompt
 
 import os
 from dotenv import load_dotenv
@@ -106,7 +107,7 @@ async def test_accounts():
         print("Test get_positions()")
         position = await svc.get_positions(instId="DOGE-USDT-SWAP")
         print(position)
-        
+        print("str position:", format_position_str_for_prompt(position, inst="DOGE-USDT-SWAP"))
         print("Test get_balance()")
         balance = await svc.get_balance(ccy="USDT")
         print(balance)

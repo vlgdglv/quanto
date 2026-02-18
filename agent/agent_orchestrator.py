@@ -1,7 +1,6 @@
 # instrument_worker.py
 import asyncio, time
-from datetime import datetime
-
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List, Callable
 
@@ -26,22 +25,37 @@ class ContextSignal:
     def is_stale(self) -> bool:
         return (time.time() - self.ts_updated) > self.valid_ttl
 
+tf2seconds = {
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1H": 3600,
+    "4H": 14400,
+}
+
 class ContextBoard:
-    def __init__(self):
+    def __init__(self, driver_tf="1H"):
         self._frames: Dict[str, FeatureFrame] = {}
         self._signal: Optional[ContextSignal] = None
         self._lock = asyncio.Lock()
+        self.latest_driver_ts = None
+        self.processed_driver_ts = None
+        self.driver_tf = driver_tf
     
     def update_frame(self, f: FeatureFrame):
         self._frames[(f.inst, f.tf)] = f
+        if f.tf == self.driver_tf:
+            self.latest_driver_ts = f.ts_close
 
     def get_frame(self, inst: str, tf: str) -> Optional[FeatureFrame]:
         return self._frames.get((inst, tf))
 
-    async def update_signal(self, payload: Any):
+    async def update_signal(self, payload: Any,source_ts: str = None):
         async with self._lock:
             self._signal = ContextSignal(payload)
-   
+            if source_ts:
+                self.processed_driver_ts = source_ts
+
     def get_signal(self) -> Optional[ContextSignal]:
         return self._signal
 
@@ -124,7 +138,7 @@ class InstrumentAgentOrchestrator:
                 if self.trend_callback:
                     await self.trend_callback(driver_frame.inst, driver_frame.ts_close, trend_output)
 
-                await self.board.update_signal(trend_output)
+                await self.board.update_signal(trend_output, source_ts=driver_frame.ts_close)
             except Exception as e:
                 logger.error(f"Trend loop failed: {e}")
 
@@ -140,6 +154,7 @@ class InstrumentAgentOrchestrator:
         while True:
             trigger_frame: FeatureFrame = await self.trigger_queue.get()
             if trigger_frame:
+                await self._wait_for_alignment(trigger_frame.ts_close)
                 print(f"Got trigger frame for {trigger_frame.inst} at {trigger_frame.ts_close}")
             position: List[Position] = await self.account_service.get_positions(instId=self.inst)
             
@@ -160,11 +175,8 @@ class InstrumentAgentOrchestrator:
                 if self.trade_machine is not None:
                     if self.trade_machine.has_position():
                         logger.info(f"Position exists for {self.inst}")
-                        print(position)
-                        # if len(position) == 0:
-                        #     logger.warning(f"Position exists but no position found in account service for {self.inst}")
-                        #     continue
-                        trigger_out = await invoke_exit_agent(trend_singal.payload, trigger_frame, position)
+                        last_trigger = self.trade_machine.get_last_trigger_output()
+                        trigger_out = await invoke_exit_agent(trend_singal.payload, trigger_frame, position, last_trigger)
                     else:
                         # if len(position) > 0:
                         #     print(position)
@@ -174,13 +186,46 @@ class InstrumentAgentOrchestrator:
                 else:
                     trigger_out = await invoke_trigger_agent(trend_singal.payload, trigger_frame, position)
                 
+                result = await self.trade_machine.step(trigger_out)
+                
                 if self.trigger_callback:
                     await self.trigger_callback(trigger_frame.inst, trigger_frame.ts_close, trigger_out)
-                result = await self.trade_machine.step(trigger_out)
+                
 
             except Exception as e:
                 logger.exception(f"Trigger loop failed: {e}")
+        
+    async def _wait_for_alignment(self, trigger_ts_str: str):
+        trig_secs = tf2seconds.get(self.tfs["trigger"])
+        driver_secs = tf2seconds.get(self.tfs["driver"])
+        
+        if not trig_secs or not driver_secs:
+            logger.error("Unknown TF in TF_SECS config")
+            return
+
+        ts_dt = datetime.strptime(trigger_ts_str, "%Y%m%d%H%M%S")
+        ts_unix = ts_dt.timestamp()
+
+        trigger_end_unix = ts_unix + trig_secs
+
+        if trigger_end_unix % driver_secs == 0:
+            target_driver_unix = trigger_end_unix - driver_secs
+            target_driver_ts = datetime.fromtimestamp(target_driver_unix).strftime("%Y%m%d%H%M%S")
+            
+            logger.debug(f"Alignment check: Trigger {trigger_ts_str} aligns with Driver {target_driver_ts}. Waiting...")
+
+            wait_start = datetime.now()
+            while True:
+                if (datetime.now() - wait_start).seconds > 45:
+                    logger.warning(f"Alignment Timeout: Proceeding without confirmed Trend for {target_driver_ts}")
+                    break
                 
+                if self.board.processed_driver_ts and self.board.processed_driver_ts >= target_driver_ts:
+                    logger.info(f"Alignment synced. Trend ready for {self.board.processed_driver_ts}")
+                    break
+                
+                await asyncio.sleep(0.1)
+    
     def _is_rd_stale(self, rd_state):
         if not rd_state: return True
         return (time.time() - rd_state.get('calc_ts', 0)) > (4 * 3600 * 2)
