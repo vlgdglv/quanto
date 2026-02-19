@@ -129,7 +129,7 @@ class TradingService:
 
         if cmd.leverage is not None:
             resp = await self.account_service.set_leverage(instId=cmd.instId, lever=cmd.leverage, mgnMode=cmd.tdMode)
-            print(resp)
+            # print(resp)
             
         try:
             # Unpack cmd hear

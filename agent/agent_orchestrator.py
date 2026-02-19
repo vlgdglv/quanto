@@ -155,7 +155,7 @@ class InstrumentAgentOrchestrator:
             trigger_frame: FeatureFrame = await self.trigger_queue.get()
             if trigger_frame:
                 await self._wait_for_alignment(trigger_frame.ts_close)
-                print(f"Got trigger frame for {trigger_frame.inst} at {trigger_frame.ts_close}")
+                # print(f"Got trigger frame for {trigger_frame.inst} at {trigger_frame.ts_close}")
             position: List[Position] = await self.account_service.get_positions(instId=self.inst)
             
             trend_singal = self.board.get_signal()

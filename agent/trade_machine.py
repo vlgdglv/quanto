@@ -40,7 +40,7 @@ class PositionState(Enum):
     # Futures
     OPENING = auto()       # 已生成计划，还未下单或等待成交
     CLOSING = auto()       # 正在平仓（挂了平仓单，等待成交）
-    CLOSED = auto()        # 最近一笔仓位刚刚结束（可用于复盘）
+    # CLOSED = auto()        # 最近一笔仓位刚刚结束（可用于复盘）
     
     def __str__(self):
         return self.name
@@ -125,7 +125,7 @@ class TradeMachine:
         self._pending_open_cl_ord_id: Optional[str] = None
         self._pending_close_cl_ord_id: Optional[str] = None
         
-        self.last_state = None
+        self._pending_open_state = None
         
         if state_recording:
             self.state_recording_path = state_recording_path
@@ -152,16 +152,18 @@ class TradeMachine:
         self._on_state_change(current_state, target_state, payload)
         
     def _is_valid_transition(self, current_state: PositionState, target_state: PositionState):
-        # raced
-        # if current_state == target_state:
-        #     return False
+        """
+        Legal transitions:
+        - NO_POSITION -> OPEN (filled faster than state change), OPENING
+        - OPEN -> CLOSING, NO_POSITION (filled faster than state change)
+        - OPENING -> OPEN (filled faster than state change), NO_POSITION(canceled), ?CLOSING
+        - CLOSING -> NO_POSITION (filled faster than state change)
+        """
+        # hard check: definitely not valid
         if current_state == PositionState.OPEN and target_state == PositionState.OPENING:
-            return False
-        if current_state == PositionState.CLOSED and target_state == PositionState.CLOSING:
             return False
         if current_state == PositionState.NO_POSITION and target_state == PositionState.CLOSING:
             return False
-        
         return True
     
     def _update_position_data(self, payload: Dict[str, Any]):
@@ -193,6 +195,23 @@ class TradeMachine:
     async def step(self,
                    decisions
                    ):
+        if self.state == PositionState.OPENING:
+            if self.state.opened_ts is not None:
+                if (datetime.now() - self.state.opened_ts).total_seconds() > 60:
+                    # state is opening but orders are fully filled
+                    # this is because order filled and execute state change -> OPEN
+                    # before order_ack.accepted is true and set to OPENING and stay OPENING
+                    # force it to OPEN
+                    self._transition_to(PositionState.OPEN)
+        if self.state == PositionState.CLOSING:
+            if self.state.closed_ts is not None:
+                if (datetime.now() - self.state.closed_ts).total_seconds() > 60:
+                    # state is closing but orders are fully filled
+                    # this is because order filled and execute state change -> NO_POSITION
+                    # before order_ack.accepted is true and set to CLOSING and stay CLOSING
+                    # force it to NO_POSITION
+                    self._transition_to(PositionState.NO_POSITION)
+                    
         self.last_trigger_output = decisions
         if self.state == PositionState.NO_POSITION:
             await self._handle_no_position(decisions.action)
@@ -259,8 +278,10 @@ class TradeMachine:
                 state_change_payload = {
                     "side": side,
                     "size": target_size,
-                    "opened_ts": None
+                    "opened_ts": None,
+                    "closed_ts": None
                 }
+                self._pending_open_state = state_change_payload
                 self._transition_to(PositionState.OPENING, state_change_payload)
             else:
                 logger.warning(f"Failed to submit order: {order_ack}")
@@ -319,7 +340,7 @@ class TradeMachine:
             # max_coin_size = max_notional_value / reference_price
             # target_contract_size_raw = max_coin_size / instrument.ctVal
             # return target_contract_size_raw, reference_price
-            max_contracts_raw = ((available_balance * 0.8) * self.leverage) / (instrument.ctVal * reference_price)
+            max_contracts_raw = ((available_balance * 0.9) * self.leverage) / (instrument.ctVal * reference_price)
             return max_contracts_raw, reference_price
             
         except Exception as e:
@@ -340,8 +361,11 @@ class TradeMachine:
             'state': 'live', 'lever': '5', 'pnl': '0', 'feeCcy': 'USDT', 'fee': '0',
         } 
         """
-        logger.info(f"Order Feed event: {evt}")
+        
         data = evt['data'][0]
+        evt_str=f"inst={data['instId']}, ordId={data['ordId']}, state={data['state']}, side={data['side']}, fillSz={data['fillSz']}, pnl={data['pnl']}"
+        logger.info(f"Order Feed event: {evt_str}")
+        
         inst_id = data.get("instId")
         if inst_id and inst_id != self.inst:
             logger.info("Not this order...")
@@ -352,7 +376,7 @@ class TradeMachine:
 
         state = data.get("state") or data.get("status")
         side  = data.get("side")
-        acc_fill_sz_str = data.get("accFillSz")
+        acc_fill_sz_str = data.get("fillSz")
         avg_px_str      = data.get("avgPx")
         # print("Get instd id and order id: ", inst_id, data.get("ordId"), "state: ", state)
         # print("ord_id           :", ord_id)
@@ -413,10 +437,12 @@ class TradeMachine:
             if state == "filled":
                 filled_sz = float(acc_fill_sz_str) if acc_fill_sz_str else float("0")
                 state_change_payload = {
-                    "side": side or self.postion_state.side,
-                    "size": str(filled_sz),
+                    "side": self._pending_open_state["side"],
+                    "size": self._pending_open_state["size"], # bug: filled_sz means this order's size, not the target size
                     "opened_ts": time.time(),
+                    "closed_ts": None
                 }
+                self._pending_open_state = None
                 self._transition_to(PositionState.OPEN, state_change_payload)
             else:
                 pass
@@ -427,7 +453,8 @@ class TradeMachine:
             state_change_payload = {
                 "side": None,
                 "size": None,
-                "opened_ts": None
+                "opened_ts": None,
+                "closed_ts": None
             }
             self._transition_to(PositionState.NO_POSITION, state_change_payload)
             self._pending_open_order_id = None
@@ -452,6 +479,7 @@ class TradeMachine:
             state_change_payload = {
                 "side": None,
                 "size": None,
+                "opened_ts": None,
                 "closed_ts": time.time()
             }
             self._transition_to(PositionState.NO_POSITION, state_change_payload)
