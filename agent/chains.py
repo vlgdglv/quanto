@@ -23,7 +23,7 @@ class BaseAgentOutput(BaseModel):
 def create_agent_chain(
     output_model: Type[BaseModel],
     prompt_text: str,
-    model_name: str = "gpt-4o",
+    task_name: str = "default",
 ) -> Runnable:
     
     parser = PydanticOutputParser(pydantic_object=output_model)
@@ -33,7 +33,7 @@ def create_agent_chain(
         partial_variables={"format_instructions": parser.get_format_instructions()},
     )
     
-    llm = get_chat_model(task=model_name)
+    llm = get_chat_model(task=task_name)
 
     chain = prompt | llm | parser
     return chain

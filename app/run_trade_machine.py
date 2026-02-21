@@ -92,7 +92,7 @@ async def main():
     # INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
     INST = os.getenv("INSTS", "DOGE-USDT-SWAP")
 
-    x = 1 * 60
+    x = 4 * 60
     x_min_ago_ms = int((time.time() - x * 60) * 1000)
     start_id = f"{x_min_ago_ms}-0"  
     FEATURES_START = start_id

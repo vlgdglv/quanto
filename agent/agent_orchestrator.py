@@ -170,27 +170,25 @@ class InstrumentAgentOrchestrator:
                 """
                     Invoke trigger agent        
                 """
-                # snap15 = build_agent_snapshot(trigger_frame)
-                # trigger_out = await invoke_trigger_agent(trend_singal.payload, trigger_frame, position)
                 if self.trade_machine is not None:
                     if self.trade_machine.has_position():
                         logger.info(f"Position exists for {self.inst}")
                         last_trigger = self.trade_machine.get_last_trigger_output()
                         trigger_out = await invoke_exit_agent(trend_singal.payload, trigger_frame, position, last_trigger)
                     else:
-                        # if len(position) > 0:
-                        #     print(position)
-                        #     logger.warning(f"No position exists but position found in account service for {self.inst}")
-                        #     continue
                         trigger_out = await invoke_entry_agent(trend_singal.payload, trigger_frame)
                 else:
                     trigger_out = await invoke_trigger_agent(trend_singal.payload, trigger_frame, position)
                 
-                result = await self.trade_machine.step(trigger_out)
+                close_time = datetime.strptime(trigger_frame.ts_close, "%Y%m%d%H%M%S") + timedelta(seconds=tf2seconds.get(self.tfs["trigger"]))
+                emit_time = datetime.now()
+                if emit_time - close_time > timedelta(minutes=3): 
+                    logger.warning("Warming up agents, no trade step taken")
+                else:
+                    result = await self.trade_machine.step(trigger_out)
                 
                 if self.trigger_callback:
                     await self.trigger_callback(trigger_frame.inst, trigger_frame.ts_close, trigger_out)
-                
 
             except Exception as e:
                 logger.exception(f"Trigger loop failed: {e}")
@@ -216,7 +214,7 @@ class InstrumentAgentOrchestrator:
 
             wait_start = datetime.now()
             while True:
-                if (datetime.now() - wait_start).seconds > 45:
+                if (datetime.now() - wait_start).seconds > 120:
                     logger.warning(f"Alignment Timeout: Proceeding without confirmed Trend for {target_driver_ts}")
                     break
                 

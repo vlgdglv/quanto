@@ -196,16 +196,16 @@ class TradeMachine:
                    decisions
                    ):
         if self.state == PositionState.OPENING:
-            if self.state.opened_ts is not None:
-                if (datetime.now() - self.state.opened_ts).total_seconds() > 60:
+            if self.postion_state.opened_ts is not None:
+                if (datetime.now() - self.postion_state.opened_ts).total_seconds() > 60:
                     # state is opening but orders are fully filled
                     # this is because order filled and execute state change -> OPEN
                     # before order_ack.accepted is true and set to OPENING and stay OPENING
                     # force it to OPEN
                     self._transition_to(PositionState.OPEN)
         if self.state == PositionState.CLOSING:
-            if self.state.closed_ts is not None:
-                if (datetime.now() - self.state.closed_ts).total_seconds() > 60:
+            if self.postion_state.closed_ts is not None:
+                if (datetime.now() - self.postion_state.closed_ts).total_seconds() > 60:
                     # state is closing but orders are fully filled
                     # this is because order filled and execute state change -> NO_POSITION
                     # before order_ack.accepted is true and set to CLOSING and stay CLOSING
@@ -267,7 +267,13 @@ class TradeMachine:
 
             # TODO LLM Check
             logger.info("[ORDER CMD] {}".format(order_cmd))
-            
+            state_change_payload = {
+                    "side": side,
+                    "size": target_size,
+                    "opened_ts": None,
+                    "closed_ts": None
+            }
+            self._pending_open_state = state_change_payload
             if self.order_type == "market":
                 order_ack = await self.trading_service.submit_market(order_cmd, await_live=False)
             else:
@@ -275,17 +281,11 @@ class TradeMachine:
             logger.info("[ORDER ACK] {}".format(order_ack))
             if order_ack.accepted:
                 self._pending_open_order_id = str(order_ack.ordId)
-                state_change_payload = {
-                    "side": side,
-                    "size": target_size,
-                    "opened_ts": None,
-                    "closed_ts": None
-                }
-                self._pending_open_state = state_change_payload
                 self._transition_to(PositionState.OPENING, state_change_payload)
             else:
                 logger.warning(f"Failed to submit order: {order_ack}")
                 self._pending_open_cl_ord_id = None
+                self._pending_open_state = None
 
             logger.debug(f"New Order submitted: {order_ack}")
         
