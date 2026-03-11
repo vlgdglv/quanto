@@ -109,6 +109,8 @@ Previous View: {last_context}
 - Look beyond the price. Combine volatility, funding, and structure.
 - Is it a true `TREND_IMPULSE`, a messy `CHOP_DEATH_ZONE`, or a ticking time bomb `VOLATILITY_COIL`?
 - *Rule of Thumb:* If there is no clear edge, it is CHOP. Do not force a narrative.
+- **The Breakout Override:** If the 1H price is violently piercing the Upper/Lower Donchian band AND Volatility is expanding (Squeeze firing), DO NOT call it a RANGE or CHOP. It is a TREND_IMPULSE. The 4H indicators lag; trust the 1H volatility expansion. DO NOT instruct to fade a breakout.
+- **Momentum Respect:** Extreme overbought/oversold indicators (like high RSI on 1H/4H) signify trend STRENGTH, not an immediate reversal. Do NOT predict a macro top/bottom prematurely.
 
 **Step B: Define the Map (Support/Resistance)**
 - Locate the *heavy* macro levels. These are not 15m wicks; these are 1H/4H structural pivots, major moving averages, or Donchian extremes where the regime would structurally break.

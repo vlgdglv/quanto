@@ -120,6 +120,27 @@ round_map = {
     # —— 效率比 —— 
     "er": 3,             # [0,1] 内
 
+    # —— 结构化形态特征（比例与标准化距离）——
+    "body_ratio": 3,           # [0, 1] 比例，3位（如 0.618）足以让 LLM 区分十字星或大实体
+    "upper_wick_ratio": 3,     # [0, 1] 同上
+    "lower_wick_ratio": 3,     # [0, 1] 同上
+    "zclose_vs_ema_fast": 3,   # Z-Score 偏离度。通常在 [-5, 5] 之间，保留3位足以表征极值偏离
+    "donchian_break_pos": 3,   # [0, 1] 通道位置比例
+    "atr_pct": 4,              # ATR 占价格百分比通常较小（比如 DOGE 可能是 0.0062），保留4位防止被抹零
+
+    # —— Bar 级微观聚合特征（成交与盘口）——
+    "bar_spread_bp_mean": 2,   # 基点均值，与现有的 spread_bp 保持一致
+    "bar_spread_bp_std": 2,    # 基点的波动率，2位足够
+    "bar_spread_bp_max": 2,    # 最大基点，2位
+    "bar_trade_count": 0,      # K线内的成交笔数，必须是整数 (0位小数)
+    "bar_avg_trade_size": 3,   # 平均单笔成交体积，与现有的 cvd 精度对齐，保留3位
+    "bar_buy_vol": 3,          # 绝对买入体积，与现有的 cvd 对齐
+    "bar_sell_vol": 3,         # 绝对卖出体积，同上
+    "bar_signed_vol_ratio": 3, # [-1, 1] 多空净力量比例，3位足够（如 0.852 表示极强买盘）
+    "bar_cvd_delta": 3,        # K线内净体积变化，与原有 cvd 对齐
+    "bar_vpin_mean": 3,        # [0, 1] 毒性概率均值，与现有的 vpin 对齐
+    "bar_kyle_mean": 6,        # 深度冲击成本均值，量级极小，与现有的 kyle_lambda 保持一致的 6 位
+
     # —— Funding —— 
     "funding_rate": 6,         # 通常很小（~1e-4）
     "funding_rate_ema": 6,
@@ -550,7 +571,7 @@ def vpin_update(state: VPINState, signed_size: float)->float:
     side_buy = signed_size > 0
 
     while vol > 0.0:
-        remain = max(state.bucket_vol - state.filled_in_bucket, 1e-12)
+        remain = state.bucket_vol - state.filled_in_bucket
         take = min(vol, remain)
 
         if side_buy:
@@ -559,7 +580,6 @@ def vpin_update(state: VPINState, signed_size: float)->float:
             state.cur_sell += take
         state.filled_in_bucket += take
         vol -= take
-
         if state.filled_in_bucket >= state.bucket_vol - 1e-12:
             imb = abs(state.cur_buy - state.cur_sell) / max(state.bucket_vol, 1e-12)
             state.last_vals.append(imb)
@@ -576,6 +596,7 @@ def vpin_update(state: VPINState, signed_size: float)->float:
                 state.cur_buy = 0.0
                 state.cur_sell = 0.0
             state.filled_in_bucket = overflow
+
     if state.last_vals:
         state.vpin = float(np.mean(state.last_vals))
     return state.vpin
@@ -726,6 +747,89 @@ class OIState:
 
 
 
+
+class BarAggState:
+    def __init__(self):
+        self._reset_accumulators()
+        self.bar_spread_bp_mean = np.nan
+        self.bar_spread_bp_std = np.nan
+        self.bar_spread_bp_max = np.nan
+        self.bar_buy_vol = 0.0
+        self.bar_sell_vol = 0.0
+        self.bar_signed_vol_ratio = 0.0
+        self.bar_trade_count = 0
+        self.bar_avg_trade_size = 0.0
+        self.bar_cvd_delta = 0.0
+        self.bar_vpin_mean = np.nan
+        self.bar_kyle_mean = np.nan
+
+    def _reset_accumulators(self):
+        self._spread_sum = 0.0
+        self._spread_sq_sum = 0.0
+        self._spread_max = 0.0
+        self._book_updates = 0
+
+        self._buy_vol = 0.0
+        self._sell_vol = 0.0
+        self._trade_count = 0
+        self._cvd_delta = 0.0
+
+        self._vpin_sum = 0.0
+        self._kyle_sum = 0.0
+        self._trade_updates_for_metrics = 0
+
+    def add_books(self, spread_bp: float):
+        self._spread_sum += spread_bp
+        self._spread_sq_sum += spread_bp * spread_bp
+        if spread_bp > self._spread_max:
+            self._spread_max = spread_bp
+        self._book_updates += 1
+
+    def add_trade(self, sz: float, side: str, vpin: float, kyle: float):
+        if side == "buy":
+            self._buy_vol += sz
+            self._cvd_delta += vpin
+        elif side == "sell":
+            self._sell_vol += sz
+            self._cvd_delta -= vpin
+        self._trade_count += 1
+
+        if not np.isnan(vpin):
+            self._vpin_sum += vpin
+            self._trade_updates_for_metrics += 1
+        if not np.isnan(kyle):
+            self._kyle_sum += kyle
+    
+    def finalize_bar(self, eps=1e-6):
+        if self._book_updates > 0:
+            self.bar_spread_bp_mean = self._spread_sum / self._book_updates
+            variance = (self._spread_sq_sum / self._book_updates) - (self.bar_spread_bp_mean ** 2)
+            self.bar_spread_bp_std = math.sqrt(max(0.0, variance))
+        else:
+            self.bar_spread_bp_mean = np.nan
+            self.bar_spread_bp_std = np.nan
+        self.bar_spread_bp_max = self._spread_max
+
+        self.bar_buy_vol = self._buy_vol
+        self.bar_sell_vol = self._sell_vol
+        total_val = self._buy_vol + self._sell_vol
+        self.bar_signed_vol_ratio = (self._buy_vol - self._sell_vol) / max(eps, total_val)
+        
+        self.bar_trade_count = self._trade_count
+        self.bar_avg_trade_size = total_val / max(eps, self._trade_count)
+        self.bar_cvd_delta = self._cvd_delta
+
+        if self._trade_updates_for_metrics > 0:
+            self.bar_vpin_mean = self._vpin_sum / self._trade_updates_for_metrics
+            self.bar_kyle_mean = self._kyle_sum / self._trade_updates_for_metrics
+        else:
+            self.bar_vpin_mean = np.nan
+            self.bar_kyle_mean = np.nan
+
+        self._reset_accumulators()
+    
+
+
 # -------------
 #
 # -------------
@@ -754,6 +858,8 @@ class SeriesState:
     prev_close: Optional[float] = None
     ofi_win_ms: int = 5000
     ofi_deq: Deque[Tuple[int, float]] = field(default_factory=deque)
+
+    bar_agg: BarAggState = field(default_factory=BarAggState)
 
     
 @dataclass
@@ -832,6 +938,7 @@ class FeatureEnginePD:
                 er=ERState(n=self._cfg["er_n"]),
                 funding=FundingState(),
                 oi=OIState(),
+                bar_agg=BarAggState(),
             )
         return self._series[key]
     
@@ -846,13 +953,17 @@ class FeatureEnginePD:
         if df_books is None or df_books.empty: return
         state = self._get_shared_state(instId)
 
+        tf_states = [state for key, state in self._series.items() 
+                if key[0] == instId and key[1] != self._shared_tf]
+        
         for _, r in df_books.iterrows():
             bb, ba = r.get("best_bid"), r.get("best_ask")
             if bb is None or ba is None or bb <= 0.0 or ba <= 0.0:
                 continue
             mid = (bb + ba) / 2.0
             spread = ba - bb
-            state.micro.spread_bp = (spread / mid * 10000.0) if mid > 0.0 else np.nan
+            spread_bp = (spread / mid * 10000.0) if mid > 0.0 else np.nan
+            
             state.last_mid = mid
             bids, asks = r.get("bids"), r.get("asks")
             
@@ -862,6 +973,12 @@ class FeatureEnginePD:
                 asks = [(float(p), float(q)) for p, q in r["asks"] if float(p) > 0 and float(q) > 0]
             if bids and asks:
                 qi_microprice_update(state.qi, bids, asks)
+            state.micro.spread_bp = spread_bp
+
+            # print("state.micro.spread_bp after: ", state.micro.spread_bp)
+            for state in tf_states:
+                state.bar_agg.add_books(spread_bp)
+
             self.updates += 1
 
     # ----------- trades -> ofi_5s -----------
@@ -869,22 +986,30 @@ class FeatureEnginePD:
         if df_trades is None or df_trades.empty: return
         state = self._get_shared_state(instId)
 
+        tf_states = [state for key, state in self._series.items() 
+                     if key[0] == instId and key[1] != self._shared_tf]
+        
         for _, r in df_trades.iterrows():
             ts = int(r["ts"])
             side = str(r.get("side",""))
             sz = float(r.get("sz",0.0))
             delta = sz if side.lower() == "buy" else (-sz if side.lower() == "sell" else 0.0)
             state.ofi_deq.append((ts, delta))
-            
+
             lo = ts - state.ofi_win_ms
             while state.ofi_deq and state.ofi_deq[0][0] < lo:
                 state.ofi_deq.popleft()
             state.micro.ofi_5s = sum(x[1] for x in state.ofi_deq)
 
             cvd_update(state.cvd, delta)
-            vpin_update(state.vpin, delta)
+            vpin = vpin_update(state.vpin, delta)
+            
+            kyle = np.nan
             if state.last_mid is not None:
-                kyle_lambda_update(state.kyle, state.last_mid, delta)
+                kyle = kyle_lambda_update(state.kyle, state.last_mid, delta)
+            
+            for state in tf_states:
+                state.bar_agg.add_trade(sz, side, vpin, kyle)
             self.updates += 1
 
     # ----------- candles -> features -----------
@@ -896,8 +1021,7 @@ class FeatureEnginePD:
         """
         if df_candles is None or df_candles.empty: return
         state = self._get_state(instId, tf)
-        cloesd_ts = 0
-        cloesd = False
+
         for _, r in df_candles.iterrows():
             ts = int(r["ts"])
             o, h, l, c = map(float, r[["open","high","low","close"]])
@@ -932,6 +1056,8 @@ class FeatureEnginePD:
             er_val = er_update(state.er, c)
             sq_ratio, sq_on = squeeze_update(state.squeeze, state.atr, c)
             up, lo, width, width_norm = donchian_update(state.donchian, h, l, state.atr)
+            
+            state.bar_agg.finalize_bar()
 
             self.updates += 1
             self.updates_cnt = self.updates
@@ -1098,10 +1224,28 @@ class FeatureEnginePD:
         src_funding = shared.funding
         src_oi      = shared.oi
 
+        c, o, h, l = state.ohlc.close, state.ohlc.open, state.ohlc.high, state.ohlc.low
+        hl_range = h - l
+        eps = 1e-8
+        body_ratio = abs(c - o) / (hl_range + eps)
+        upper_wick = h - max(o, c)
+        lower_wick = min(o, c) - l
+        upper_wick_ratio = upper_wick / (hl_range + eps)
+        lower_wick_ratio = lower_wick / (hl_range + eps)
+        
+        atr_val = state.atr.atr or eps
+        atr_pct = atr_val / c if c > 0 else 0
+        
+        ema_fast_val = state.macd.ema_fast.value or c
+        zclose_vs_ema_fast = (c - ema_fast_val) / atr_val
+        
+        don_width = state.donchian.width + eps
+        donchian_break_pos = (c - state.donchian.lower) / don_width
+
         out_rows = []
         out_rows.append({
                 "instId": instId, "tf": tf, "ts": ts_to_str(ts),
-                "o": state.ohlc.open, "h": state.ohlc.high, "l": state.ohlc.low, "c": state.ohlc.close,
+                "o": o, "h": h, "l": l, "c": c,
                 "ema_fast": state.macd.ema_fast.value or state.prev_close, "ema_slow": state.macd.ema_slow.value or state.prev_close,
                 "macd_dif": state.macd.diff or 0.0, "macd_dea": state.macd.dea.value or 0.0, 
                 "macd_hist": state.macd.hist or 0.0, "rsi": state.rsi.rsi or 50.0,
@@ -1113,9 +1257,30 @@ class FeatureEnginePD:
                 "er": state.er.er,
                 
                 # From shared
-                "spread_bp": src_micro.spread_bp, "ofi_5s": src_micro.ofi_5s,
-                "qi1": src_qi.qi1, "qi5": src_qi.qi5, "microprice": src_qi.microprice,
-                "cvd": src_cvd.cvd, "kyle_lambda": src_kyle.value, "vpin": src_vpin.vpin,
+                # "spread_bp": src_micro.spread_bp, "ofi_5s": src_micro.ofi_5s,
+                # "qi1": src_qi.qi1, "qi5": src_qi.qi5, "microprice": src_qi.microprice,
+                # "cvd": src_cvd.cvd, "kyle_lambda": src_kyle.value, "vpin": src_vpin.vpin,
+                # --- 1. 新增的结构化形态特征 ---
+                "body_ratio": body_ratio,
+                "upper_wick_ratio": upper_wick_ratio,
+                "lower_wick_ratio": lower_wick_ratio,
+                "zclose_vs_ema_fast": zclose_vs_ema_fast,
+                "donchian_break_pos": donchian_break_pos,
+                "atr_pct": atr_pct,
+                
+                # --- 2. 新增的 Bar 级微观聚合特征 ---
+                "bar_spread_bp_mean": state.bar_agg.bar_spread_bp_mean,
+                "bar_spread_bp_std": state.bar_agg.bar_spread_bp_std,
+                "bar_spread_bp_max": state.bar_agg.bar_spread_bp_max,
+                "bar_trade_count": state.bar_agg.bar_trade_count,
+                "bar_avg_trade_size": state.bar_agg.bar_avg_trade_size,
+                "bar_buy_vol": state.bar_agg.bar_buy_vol,
+                "bar_sell_vol": state.bar_agg.bar_sell_vol,
+                "bar_signed_vol_ratio": state.bar_agg.bar_signed_vol_ratio,
+                "bar_cvd_delta": state.bar_agg.bar_cvd_delta,
+                "bar_vpin_mean": state.bar_agg.bar_vpin_mean,
+                "bar_kyle_mean": state.bar_agg.bar_kyle_mean,
+
                 "funding_rate": src_funding.funding_rate,
                 "funding_rate_ema": src_funding.fr_ema.value,
                 "funding_premium": src_funding.premium,
@@ -1187,9 +1352,30 @@ class FeatureEnginePD:
             "o","h","l","c",
             "ema_fast","ema_slow","macd_dif","macd_dea","macd_hist",
             "rsi","kdj_k","kdj_d","kdj_j",
-            "atr","rv_ewma","spread_bp","ofi_5s",
-            "qi1","qi5","microprice",
-            "cvd","kyle_lambda","vpin",
+            "atr","rv_ewma",
+            
+            # "spread_bp","ofi_5s",
+            # "qi1","qi5","microprice",
+            # "cvd","kyle_lambda","vpin",
+            "body_ratio",
+            "upper_wick_ratio",
+            "lower_wick_ratio",
+            "zclose_vs_ema_fast",
+            "donchian_break_pos",
+            "atr_pct",
+                
+            "bar_spread_bp_mean",
+            "bar_spread_bp_std",
+            "bar_spread_bp_max",
+            "bar_trade_count",
+            "bar_avg_trade_size",
+            "bar_buy_vol",
+            "bar_sell_vol",
+            "bar_signed_vol_ratio",
+            "bar_cvd_delta",
+            "bar_vpin_mean",
+            "bar_kyle_mean",
+
             "squeeze_ratio","squeeze_on",
             "donchian_upper","donchian_lower","donchian_width","donchian_width_norm",
             "er",

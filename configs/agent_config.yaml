@@ -1,7 +1,7 @@
 llm:
   default:
     provider: openai
-    model: o4-mini
+    model: gpt-4.1-mini
     temperature: 0.2
     timeout: 60.0
     max_retries: 2
@@ -15,14 +15,14 @@ llm:
     
   trigger:
     provider: openai
-    model: o4-mini
+    model: gpt-4.1-mini
     temperature: 1
     timeout: 30.0
     max_retries: 2
     
   trading:
     provider: openai
-    model: o4-mini
+    model: gpt-4.1-mini
     temperature: 0.0
     timeout: 30.0
     max_retries: 3

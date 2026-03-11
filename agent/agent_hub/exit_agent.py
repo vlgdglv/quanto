@@ -24,84 +24,75 @@ class ExitOutput(BaseModel):
     ] = Field(description="The immediate tactical decision.")
     
     thesis_audit: str = Field(
-        description="Compare the current market reality against the original 'entry_trade_thesis' and 'exit_expectation'. Is the original premise playing out as expected, delayed, or structurally broken?"
+        description="A brief reality check: Is the structural stop hit? Are we sitting on large profits that need protecting?"
     )
     
     reasoning: str = Field(
-        description="Step-by-step logical deduction for the final action. If HOLD, why is it safe? If CLOSE, is it to lock in profit, cut a structural loss, or abort a stalled/toxic setup?"
+        description="Explain the execution logic. Focus entirely on Net PnL preservation, Hard Stop breaches, or Order Flow toxicity."
     )
-    
-    urgency_score: float = Field(
-        description="0.0 to 1.0. 0.8+ = MARKET ORDER NOW (The house is on fire or target hit). <0.5 = HOLD."
-    )
-
 
 EXIT_PROMPT = """
-Role: Ruthless Position Manager (The Executioner).
-Objective: **PROTECT EQUITY & LOCK IN ALPHA.**
-**Core Doctrine:**
-1. **The Handshake Rule:** Your primary job is to evaluate if the market is obeying the original Entry Agent's `Exit Expectation`. If the script is broken, kill the trade.
-2. **Flow Over Hope:** We do not pray for reversals. If order flow becomes toxic (divergence, massive counter-pressure) while in a position, we exit.
-3. **Protect the Run:** If the thesis is playing out perfectly, give it room to breathe. Do not choke a winning trade out of fear.
+Role: Ruthless Position Manager & Wealth Protector.
+Objective: **PROTECT EQUITY & PRESERVE POSITIVE EXPECTANCY.** Manage risk objectively. No hope. No storytelling.
 
-# 1. POSITION VITAL SIGNS
+# 1. CRITICAL RULES
+1. Read Net PnL exactly as given.
+2. Compare Current Price precisely with `entry_risk_invalidation`.
+3. No fabricated logic beyond provided data.
+
+# 2. POSITION MANAGEMENT LOGIC
+
+**Model A: Structural Profit Protection**
+- If Net PnL ≥ 2R relative to initial risk and structure weakens significantly → CLOSE.
+- If Net PnL ≥ 3R → consider closing to lock structural gain.
+
+**Model B: Hard Stop**
+- If `entry_risk_invalidation` is breached → CLOSE IMMEDIATELY.
+
+**Model C: Extreme Flow Breakdown**
+- Only exit early if flow is violently hostile AND structure weakens simultaneously.
+
+**Model D: Structural Continuation**
+- If structure holds and PnL is within normal swing fluctuation → HOLD.
+- Minor 15m pullbacks are not exit signals.
+
+# 3. DECISION PROCESS
+
+Step 1: Check hard stop.
+Step 2: Evaluate R-multiple.
+Step 3: Assess structural alignment.
+If none of the exit conditions are met → HOLD.
+
+=========================================
+# 4. CURRENT DATA
+=========================================
+
+**POSITION VITAL SIGNS:**
 {pos_info}
 
-# 2. STRATEGIC CONTEXT (The General's Order)
-**Market Regime:** {trend_regime}
-**Mandate:** "{trend_strategic_mandate}"
-**Structural Bias:** "{trend_structural_bias}"
+**ENTRY CONTEXT:**
+- Trade Thesis: "{entry_trade_thesis}"
+- Hard Risk Invalidation: "{entry_risk_invalidation}"
 
-# 3. CURRENT MARKET THREATS (The Battlefield)
+**STRATEGIC CONTEXT:**
+- Market Regime: {trend_regime}
+- Mandate: "{trend_strategic_mandate}"
+- Structural Bias: "{trend_structural_bias}"
+
+**MARKET SNAPSHOT:**
 {trigger_snap}
-*Context:* Is the Funding Rate settlement imminent? (Check `funding_time_to_next_min`).
 
-# 4. THE ENTRY HANDSHAKE (Original Intent)
-**Original Trade Thesis:** "{entry_trade_thesis}"
-**Expected Behavior:** "{entry_exit_expectation}"
-**Hard Risk Invalidation:** "{entry_risk_invalidation}"
+=========================================
+# 5. FINAL REMINDER
+=========================================
+Protect capital first.
+Respect structural stops.
+Let winners reach structural targets.
 
-# 5. SURVIVAL HEURISTICS (Dynamic Mental Models)
-*Use these to evaluate the state of the trade, not as rigid rules.*
-
-**Model A: The Broken Thesis (Structural Failure)**
-- *Symptom:* Price has breached the `Hard Risk Invalidation` level, OR the macro regime just flipped against us.
-- *Action:* **CLOSE IMMEDIATELY.** We are wrong. Cut it.
-
-**Model B: The Toxic Reversal (Flow Divergence)**
-- *Symptom:* Price might still be okay, BUT the micro-flow is turning hostile. (e.g., We are LONG, but `micro_flow.ofi_5s` is crashing, or `vpin` spikes signaling toxic counter-flow).
-- *Action:* **CLOSE (Take Profit / Scratch).** Smart money is trapped or dumping. Get out before the price collapses.
-
-**Model C: The Dead Script (Relative Time Stop)**
-- *Symptom:* Review the `Expected Behavior`. Did the Entry Agent expect an immediate violent breakout, but we've been chopping sideways with 0 momentum for multiple candles? 
-- *Action:* **CLOSE.** If the expected catalyst failed to materialize, the edge is gone. Capital is better used elsewhere.
-
-**Model D: The Wave Rider (Thesis Confirmed)**
-- *Symptom:* PnL is positive. The micro-flow supports the direction. The `Expected Behavior` is unfolding beautifully.
-- *Action:* **HOLD.** Tighten mental trailing stops, but let the trend pay you.
-
-# 6. DECISION PROCESS (Chain of Thought)
-
-**Step 1: The Reality Audit**
-- Read the Original Trade Thesis and Expected Behavior. 
-- Look at the current PnL, price action, and micro-flow. 
-- *Ask:* "Is the market doing what we predicted it would do? Or are we stuck in a regime we didn't sign up for?"
-
-**Step 2: Threat Assessment**
-- Is the `Hard Risk Invalidation` triggered?
-- Is there an immediate toxic threat in the order flow (VPIN, OFI divergence) that requires an emergency exit?
-
-**Step 3: Execution**
-- If the thesis is broken, stale, or flow is toxic -> **Urgency 0.9-1.0 (MARKET CLOSE)**.
-- If the thesis is playing out and flow is supportive -> **Urgency 0.0-0.4 (HOLD)**.
-
-# 7. OUTPUT REQUIREMENTS
 Produce a JSON strictly matching the schema.
-
-*Guideline:*
-- **Action**: [CLOSE_LONG, CLOSE_SHORT, HOLD].
-- **thesis_audit**: Honestly assess if the original script is intact.
-- **reasoning**: Formulate the logic based on the audit and current data. (e.g., "The expectation was an explosive breakdown. Instead, price is grinding higher, PnL is negative, and OFI shows strong buying pressure -> Thesis failed, exiting to cut losses.")
+- Action: [CLOSE_LONG, CLOSE_SHORT, HOLD]
+- thesis_audit
+- reasoning
 
 {format_instructions}
 """
@@ -125,7 +116,6 @@ async def invoke_exit_agent(
         "pos_info": pos_str,
         "trigger_snap": trigger_snap.model_dump(),
         "entry_trade_thesis": last_trigger.trade_thesis,
-        "entry_exit_expectation": last_trigger.exit_expectation,
         "entry_risk_invalidation": last_trigger.risk_invalidation
     }
     
@@ -149,7 +139,6 @@ async def invoke_exit_agent(
         "pos_info": pos_str,
         "trigger_snap": trigger_snap.model_dump(),
         "entry_trade_thesis": last_trigger.trade_thesis,
-        "entry_exit_expectation": last_trigger.exit_expectation,
         "entry_risk_invalidation": last_trigger.risk_invalidation
     })
     return out

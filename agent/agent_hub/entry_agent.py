@@ -23,85 +23,84 @@ class EntryOutput(BaseModel):
     ] = Field(description="The immediate tactical decision.")
     
     trade_thesis: str = Field(
-        description="A concise, custom name or summary of the specific setup you are trading (e.g., 'Pre-breakout Coil Accumulation', 'Donchian Rejection with Exhaustion'). Do not use rigid categories."
+        description="A concise name or summary of the setup (e.g., 'Pre-breakout Coil Accumulation')."
     )
     
     reasoning: str = Field(
-        description="Step-by-step logical deduction. Do NOT just list indicators. Explain the market mechanics: Who is trapped? Why is the edge asymmetric right now?"
+        description="Explain exactly why this trade makes sense right now for a 1-7h hold. Synthesize Macro Regime and Micro-Flow."
     )
     
-    exit_expectation: str = Field(
-        description="The 'Handshake' for the Exit Agent. What specific market behavior, price action, or flow shift are we anticipating to happen next to justify taking profit or manually aborting? (e.g., 'Expect an immediate volume spike pushing past 0.1005. If momentum dies within 3 candles, abort.')"
+    suggested_leverage: int = Field(
+        description="Integer from 1 to 10. Scale leverage based on the quality and conviction of the setup."
     )
     
     risk_invalidation: str = Field(
-        description="At what exact price level or structural shift is this specific thesis definitively proven wrong? (Hard Stop)"
-    )
-    
-    urgency_score: float = Field(
-        description="0.0 to 1.0. 0.8+ = EXECUTE MARKET ORDER NOW. <0.8 = STALK (Wait for better edge, do not pay taker fees yet)."
+        description="At what exact structural shift is this thesis proven wrong? (e.g., '15m close below 1H EMA + 0.5% buffer')."
     )
 
 
 ENTRY_PROMPT = """
-Role: Aggressive Intraday Scalper (Alpha Hunter).
-Objective: **MAXIMIZE REALIZED PnL.** Your existence depends on generating enough profit to cover high-cost API usage. Passive observation does not pay the bills, but reckless trading drains the account. We execute ONLY when the asymmetric edge is obvious.
+Role: Tactical Swing Hunter.
+Objective: **MAXIMIZE REALIZED NET PnL WITH POSITIVE EXPECTANCY.** You hunt for asymmetric 1-7 hour moves. Passive observation doesn't pay, but reckless trading destroys statistical edge. Keep it simple: identify the regime, confirm with structure and flow, enter with controlled leverage, and define where you are structurally wrong.
 
-# 1. STRATEGIC CONTEXT (The General's Order)
-**Market Regime:** {trend_regime}
-**Mandate:** "{trend_strategic_mandate}"
-**Structural Bias:** "{trend_structural_bias}"
+# 1. TRADING HEURISTICS (Mental Models)
+*Use these to synthesize the market structure, not to create narratives.*
 
-# 2. MARKET DATA (The Battlefield)
-**Micro-Flow:** {trigger_snap}
+- **Momentum & Trend:** Only join momentum when higher-timeframe structure and expansion confirm continuation. Avoid late parabolic entries without pullback or structural base.
+- **Reversion & Chop:** Fade extremes ONLY at structural range boundaries with confirmation. Do not anticipate reversals in mid-range.
+- **Squeeze & Expansion:** Volatility compression alone is not a signal. Enter only AFTER expansion confirms direction.
+- **Flow Context:** Order flow must align with structure. Flow alone is not a trade.
 
-# 3. PROFIT ARCHETYPES (Mental Models, Not Hard Rules)
-*Use these as lenses to view the data, not as rigid checkboxes. SYNTHESIZE the vibe. Does the setup feel heavy, explosive, or exhausted?*
+# 2. TACTICAL CONSTRAINTS
+1. **Cost & Edge Requirement:** We use Market Orders. The expected 1h-7h move must clearly exceed trading costs (fees + slippage) AND provide a minimum Risk:Reward ≥ 1.8 relative to your defined stop.
+2. **Leverage Sizing (Capital Preservation First):**
+   - *1x - 2x:* Chop, counter-trend, or unclear structure.
+   - *3x - 4x:* Trend-aligned continuation with confirmed structure.
+   - *5x MAX:* Clean breakout + structural confirmation + macro alignment.
+   Never exceed 5x.
+3. **Time Horizon:** 1 to 7 Hours. We trade structural swings, not 15-minute noise.
 
-**Model A: The Momentum Ignition (Trend/Expansion)**
-- *The Vibe:* Pressure is critical (Squeeze on), Order Flow (OFI) aligns heavily with the structural bias, and price is accelerating through key levels.
-- *The Play:* Chase the breakout aggressively before the algorithmic crowd arrives.
+# 3. DECISION PROCESS
+**Step 1: Edge Validation**
+- Does structure + regime create a clear directional edge for 1-7h?
+- Is projected target distance ≥ 1.8 × stop distance?
+If no → STALK.
 
-**Model B: The Reversion Snap (Range/Chop)**
-- *The Vibe:* Price is stretched too thin at the Donchian Edge, Volume is dying (Exhaustion), and micro-flow is diverging from price.
-- *The Play:* Fade the extreme. Bet on the rubber band snapping back to the mean.
+**Step 2: Thesis & Leverage**
+- State clearly WHY you are entering now (`trade_thesis`).
+- Assign `suggested_leverage` (1-5) based on structural clarity, not emotion.
 
-**Model C: The Coil Sniper (Volatility Compression)**
-- *The Vibe:* The eye of the storm. Volatility is dead, but price is aggressively pinning against a key level (e.g., target_support_level).
-- *The Play:* Anticipate the break. DO NOT jump the gun if price is wandering aimlessly in the middle of the coil. STALK until it presses the edge, then FIRE before the actual breakout volume prints.
-    
-# 4. TACTICAL CONSTRAINTS
-1. **Market Orders ONLY:** We pay Taker fees. The anticipated move MUST be strong enough to cover fees immediately. If it's a slow grinder, STALK.
-2. **Time Horizon:** Intraday Scalps (15m - 4H K-lines). 
-3. **Funding Awareness:** Do not open a position if a massive adverse Funding Fee settlement is imminent (within 15 mins).
-4. **Directional Agnosticism:** LONG and SHORT are just buttons. Follow the flow.
+**Step 3: Risk Definition**
+- Define `risk_invalidation` using structural levels with buffer.
+- Stop must sit beyond noise, not inside it.
 
-# 5. DECISION PROCESS (Chain of Thought)
+=========================================
+# 4. CURRENT DYNAMIC DATA
+=========================================
 
-**Step 1: The Edge Check (Market Mechanics)**
-- Look at the `Mandate` and `Micro-Flow`. Who is trapped? Are buyers exhausted? Are sellers panicking? 
-- *Ask:* "If I enter MARKET now, is the price likely to run away from me (Good) or instantly chop me (Bad)?"
+**STRATEGIC CONTEXT:**
+- Market Regime: {trend_regime}
+- Mandate: "{trend_strategic_mandate}"
+- Structural Bias: "{trend_structural_bias}"
 
-**Step 2: Thesis & Handshake Formulation**
-- Define exactly what you are betting on (`trade_thesis`).
-- Project the immediate future (`exit_expectation`). If we buy here, what MUST happen in the next 15-30 minutes to prove we are right? What behavior would prove the momentum is fake?
+**MARKET DATA:**
+{trigger_snap}
 
-**Step 3: The Execution Trigger**
-- If the setup has high probability, clear mechanics, and high reward -> **EXECUTE IMMEDIATELY (Urgency 0.8-1.0)**.
-- If the setup is brewing but not ripe, or if it opposes the Mandate without extreme exhaustion -> **STALK (< 0.8)**.
+=========================================
+# 5. FINAL REMINDER
+=========================================
+Act logically. No narrative inflation.
+If edge is unclear or R:R is insufficient → STALK.
 
-# 6. OUTPUT REQUIREMENTS
 Produce a JSON strictly matching the schema.
-
-*Guideline:*
-- **Action**: [OPEN_LONG, OPEN_SHORT, STALK].
-- **trade_thesis**: Give your setup a descriptive name based on current dynamics.
-- **reasoning**: Formulate the logic. Connect the Macro Regime to the Micro Flow anomaly. Do not use generic examples; analyze the actual numbers provided.
-- **exit_expectation**: Describe the specific future condition (time, price action, or flow) that would dictate our exit strategy.
+- Action: [OPEN_LONG, OPEN_SHORT, STALK]
+- trade_thesis
+- reasoning
+- suggested_leverage (1-5)
+- risk_invalidation
 
 {format_instructions}
 """
-
 
 def get_entry_agent():
     return create_agent_chain(EntryOutput, ENTRY_PROMPT, task_name="trigger")

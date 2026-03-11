@@ -13,7 +13,7 @@ okx:
       private:  wss://wspap.okx.com:8443/ws/v5/private
       
 trading:
-  mode: paper                # PAPER / LIVE
+  mode: live                # PAPER / LIVE
   simulated_header: true
   instType: SWAP
   leverage: 5

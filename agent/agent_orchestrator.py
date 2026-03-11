@@ -171,7 +171,7 @@ class InstrumentAgentOrchestrator:
                     Invoke trigger agent        
                 """
                 if self.trade_machine is not None:
-                    if self.trade_machine.has_position():
+                    if self.trade_machine.check_position(position):
                         logger.info(f"Position exists for {self.inst}")
                         last_trigger = self.trade_machine.get_last_trigger_output()
                         trigger_out = await invoke_exit_agent(trend_singal.payload, trigger_frame, position, last_trigger)

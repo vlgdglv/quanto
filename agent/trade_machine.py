@@ -183,8 +183,33 @@ class TradeMachine:
                     f"payload={payload}\n"
                 )
 
-    def has_position(self):
-        return self.state == PositionState.OPEN or self.state == PositionState.OPENING
+    def check_position(self, position_info=None):
+        if self.state == PositionState.OPEN or self.state == PositionState.OPENING:
+            if position_info is not None:
+                filtered = [p for p in position_info if getattr(p, "instId", None) == self.inst]
+                
+                pos_flag = True
+                if not filtered or len(filtered) == 0:
+                    pos_flag = False
+                if len(filtered) > 1:
+                    logger.warning("We can't deal with multiple positions!")
+                    pos_flag = False
+                p = filtered[0]
+                size = float(getattr(p, "pos", 0.0))
+                if abs(size) < 1e-8:
+                    pos_flag = False
+                
+                if pos_flag:
+                    return pos_flag
+                else:
+                    logger.warning("State machine marked has positions, but got valid position info!")
+                    logger.warning("Force state to NO_POSITION to sync with exchange!")
+                    self.state = PositionState.NO_POSITION
+                    return pos_flag
+                
+            else:
+                return True
+        return False
         
     def get_state(self):
         return self.state
@@ -212,19 +237,19 @@ class TradeMachine:
                     # force it to NO_POSITION
                     self._transition_to(PositionState.NO_POSITION)
                     
-        self.last_trigger_output = decisions
         if self.state == PositionState.NO_POSITION:
-            await self._handle_no_position(decisions.action)
+            self.last_trigger_output = decisions
+            await self._handle_no_position(decisions)
         elif self.state == PositionState.OPEN:
-            await self._handle_open_position(decisions.action)
+            await self._handle_open_position(decisions)
         else:
             raise NotImplementedError
         
     async def _handle_no_position(
         self, 
-        action: str,  # ["BUY", "SELL", "SKIP"]
+        decisions,
     ):
-        
+        action = decisions.action
         if action == "STALK":
             return
         
@@ -246,9 +271,11 @@ class TradeMachine:
 
             logger.debug(f"Available balance for {self.ccy}: {available_balance_str}")
             
+            order_leverage = int(decisions.suggested_leverage)
+            
             marker_price: MarketTicker = await self.instrument_service.get_inst_price(self.inst)
             instrument: Instrument = await self.instrument_service.get_or_refresh(self.inst)
-            target_size, target_price = self._calculate_order_size(available_balance_str, marker_price, instrument,side)
+            target_size, target_price = self._calculate_order_size(available_balance_str, marker_price, instrument, side, order_leverage)
             cl_ord_id = self.trading_service.gen_clOrdId()
             self._pending_open_cl_ord_id = cl_ord_id
 
@@ -262,7 +289,9 @@ class TradeMachine:
                 clOrdId=cl_ord_id,
                 tdMode="isolated",
                 posSide="net",
-                leverage=self.leverage
+                leverage=order_leverage,
+                # leverage=self.leverage,
+                # reduceOnly=True,
             )
 
             # TODO LLM Check
@@ -293,9 +322,11 @@ class TradeMachine:
             logger.error(f"Error processing NO_POSITION action {action}: {e}")
 
     
-    async def _handle_open_position(self, 
-                                    action: str, # ["HOLD", "CLOSE"]
-                                    ):
+    async def _handle_open_position(
+        self,
+        decisions, 
+    ):
+        action = decisions.action
         if action.upper() == "RIDE_PROFIT":
             return
         if action.upper() == "CLOSE_SHORT" or action.upper() == "CLOSE_LONG":
@@ -312,6 +343,7 @@ class TradeMachine:
                     clOrdId=cl_ord_id,
                     tdMode="isolated",
                     posSide="net",
+                    reduceOnly=True,
                 )
                 order_ack = await self.trading_service.submit_market(order_cmd, await_live=False)
                 logger.info(f"Close Market Order submitted: {order_ack}")
@@ -330,17 +362,18 @@ class TradeMachine:
                               target_price: MarketTicker,
                               instrument: Instrument, 
                               side: str,
+                              leverage: int,
                               ) -> Optional[float]:
         try:
             available_balance = float(available_balance_str)    
-            max_notional_value = available_balance * self.leverage
+            max_notional_value = available_balance * leverage
             
             reference_price = float(target_price.askPx) if side == "buy" else float(target_price.bidPx)
             reference_price = float(target_price.last)
             # max_coin_size = max_notional_value / reference_price
             # target_contract_size_raw = max_coin_size / instrument.ctVal
             # return target_contract_size_raw, reference_price
-            max_contracts_raw = ((available_balance * 0.9) * self.leverage) / (instrument.ctVal * reference_price)
+            max_contracts_raw = ((available_balance * 0.9) * leverage) / (instrument.ctVal * reference_price)
             return max_contracts_raw, reference_price
             
         except Exception as e:

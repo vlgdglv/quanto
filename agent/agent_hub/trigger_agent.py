@@ -77,16 +77,20 @@ def format_position_str_for_prompt(positions: List[Position], inst: str) -> str:
         return f"{max(0, minutes)} min"
 
     def fmt_one(p):
+        fee_rate = 0.0005 # 0.07%: 0.02% maker 0.05% taker
+        
         size = float(getattr(p, "pos", 0.0))
-        if abs(size) < 1e-12:
+        if abs(size) < 1e-8:
             return None
         side = "LONG" if size > 0 else "SHORT"
         avg  = float(getattr(p, "avgPx", 0.0) or 0.0)
         mark = float(getattr(p, "markPx", 0.0) or 0.0)
         liq  = float(getattr(p, "liqPx", 0.0) or 0.0)
-        lev  = float(getattr(p, "lever", 0.0) or 0.0)
+        lev  = float(getattr(p, "lever", 1.0) or 1.0)
         uplr = float(getattr(p, "uplRatio", 0.0) or 0.0)
         now = datetime.now()
+        estimated_fee_pct = fee_rate * lev * 2
+        net_uplr_pct = uplr - estimated_fee_pct
         def r(x, n=6):
             return f"{x:.6f}".rstrip("0").rstrip(".")
 
@@ -102,11 +106,12 @@ def format_position_str_for_prompt(positions: List[Position], inst: str) -> str:
             f"Liquidation Price: {r(liq)}, "
             f"Leverage: {r(lev, 2)}x, "
             f"Unrealized PnL: {uplr:.5%}, "
+            f"Estimated Net Unrealized PnL (after fee): {net_uplr_pct:.5%}, "
             f"Hold Time: {hold_time_str}"
         )
     filtered = [p for p in positions if inst is None or getattr(p, "instId", None) == inst]
     if not filtered:
-        return "No open positions."
+        return "NONE"
 
     parts = [fmt_one(p) for p in filtered if fmt_one(p)]
     return " | ".join(parts) if parts else "NONE"

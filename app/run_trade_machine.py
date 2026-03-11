@@ -10,9 +10,9 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv(os.path.expanduser("~/.okx/.env"))
-# OKX_API_KEY = os.getenv("OKX_API_KEY")
-# OKX_SECRET = os.getenv("OKX_SECRET_KEY")
-# OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
+OKX_API_KEY = os.getenv("OKX_API_KEY")
+OKX_SECRET = os.getenv("OKX_SECRET_KEY")
+OKX_PASSPHRASE = os.getenv("OKX_PASSPHRASE")
 
 OKX_API_KEY_PAPER = os.getenv("OKX_API_KEY_PAPER")
 OKX_SECRET_PAPER = os.getenv("OKX_SECRET_KEY_PAPER")
@@ -92,7 +92,7 @@ async def main():
     # INSTS = [s.strip() for s in os.getenv("INSTS", "DOGE-USDT-SWAP").split(",") if s.strip()]
     INST = os.getenv("INSTS", "DOGE-USDT-SWAP")
 
-    x = 4 * 60
+    x = 4.4 * 60
     x_min_ago_ms = int((time.time() - x * 60) * 1000)
     start_id = f"{x_min_ago_ms}-0"  
     FEATURES_START = start_id
@@ -107,12 +107,21 @@ async def main():
     )
 
     trading_cfg = load_cfg("configs/okx_trading_config.yaml")
+    mode = trading_cfg["trading"]["mode"]
+    
+    if mode == "live":
+        logger.warning("USING LIVE MODE!!!")
+        logger.warning("USING LIVE MODE!!!")
+        logger.warning("USING LIVE MODE!!!")
     endpoints = make_endpoints_from_cfg(trading_cfg)
 
     container = await HttpContainer.start(trading_cfg, logger, 
-                                          api_key=OKX_API_KEY_PAPER,
-                                          secret_key=OKX_SECRET_PAPER,
-                                          passphrase=OKX_PASSPHRASE_PAPER,
+                                        #   api_key=OKX_API_KEY_PAPER,
+                                        #   secret_key=OKX_SECRET_PAPER,
+                                        #   passphrase=OKX_PASSPHRASE_PAPER,
+                                          api_key=OKX_API_KEY,
+                                          secret_key=OKX_SECRET,
+                                          passphrase=OKX_PASSPHRASE,
                                           time_sync_interval_sec=600)
     
     http = container.http
@@ -130,15 +139,17 @@ async def main():
         "channel":"orders",
         "instType":"SWAP",   
     }]  
-    mode = trading_cfg["trading"]["mode"]
     
     orders_ws = WSClient(
         url=trading_cfg["okx"]["ws"][mode]["private"],
         subscribe_args=orders_args,
         need_login=True,
-        api_key=OKX_API_KEY_PAPER,
-        secret_key=OKX_SECRET_PAPER,
-        passphrase=OKX_PASSPHRASE_PAPER,
+        # api_key=OKX_API_KEY_PAPER,
+        # secret_key=OKX_SECRET_PAPER,
+        # passphrase=OKX_PASSPHRASE_PAPER,
+        api_key=OKX_API_KEY,
+        secret_key=OKX_SECRET,
+        passphrase=OKX_PASSPHRASE,
         inst_name="orders"
     )
     orders_feed = OrdersFeed(orders_ws)
