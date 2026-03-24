@@ -1,5 +1,6 @@
 # feature/processor.py
 import re
+import math
 import asyncio
 import pandas as pd
 from typing import Dict, Any, Optional, Callable, Awaitable, Tuple
@@ -116,12 +117,21 @@ class FeatureEngineProcessor:
     async def _publish_rows_async(self, rows: list[dict], instId: str, tf: str):
         ts_now = int(asyncio.get_running_loop().time() * 1000)
         for snap in rows:
+            raw_features = snap.get("features") or snap
+            
+            clean_features = {}
+            for k, v in raw_features.items():
+                if isinstance(v, float) and math.isnan(v):
+                    clean_features[k] = None
+                else:
+                    clean_features[k] = v
+
             payload = {
                 "kind": "FeaturesUpdated",
                 "inst": instId,
                 "tf": tf,
                 "ts_close": snap.get("ts_close") or snap.get("ts"),
-                "features": snap.get("features") or snap,
+                "features": clean_features,
                 "feature_version": getattr(self.engine, "feature_version", "v1.0.0"),
                 "engine_id": getattr(self.engine, "engine_id", "fe-worker"),
                 "computed_at": ts_now,

@@ -12,38 +12,40 @@ from agent.agent_hub import safe_float
 # =========================================================
 def build_snapshot_for_trend(frame: FeatureFrame) -> FeatureFrame:
     row: Dict[str, Any] = frame.features
-    
-    # 比如：价格在 Donchian Channel 的什么位置 (0~1)
-    donchian_pos = -1
-    if row['donchian_upper'] != row['donchian_lower']:
-        donchian_pos = (row['c'] - row['donchian_lower']) / (row['donchian_upper'] - row['donchian_lower'])
 
     features_dict = {
-        # --- A. 趋势结构 (Trend Structure) ---
+        # --- A. 趋势结构与动能 (Macro Trend & Momentum) ---
         "macro_trend": {
             "price": row['c'],
-            "ema_slow_dist_pct": safe_float((row['c'] - row['ema_slow']) / row['c'] * 100, 2),
-            "macd_hist": safe_float(row['macd_hist'], 5),
-            
-            "mom_slope_3h": safe_float(row['s_mom_slope_H180m']), 
-            "mom_slope_7h": safe_float(row['s_mom_slope_H420m']),
+            "zclose_vs_ema_fast": safe_float(row['zclose_vs_ema_fast'], 3), # 价格偏离均线的 ATR 倍数（极其直观）
+            "trend_efficiency_er": safe_float(row['er'], 3), # ER 越接近 1 趋势越流畅，越低越震荡
+            "macd_pos_streak": int(row['s_macd_pos_streak']), # MACD 连续为正的周期数
+            "macd_neg_streak": int(row['s_macd_neg_streak']),
+            "mom_slope_3h": safe_float(row['s_mom_slope_H180m'], 6), 
+            "mom_slope_7h": safe_float(row['s_mom_slope_H420m'], 6),
         },
 
-        # --- B. 关键点位 (Zones) ---
+        # --- B. 市场状态与区间 (Regime & Zones) ---
         "zone_structure": {
-            "donchian_width_pct": safe_float(row['donchian_width_norm'] * 100, 2),
-            "position_in_channel": safe_float(donchian_pos, 2), # 0.9 以上极其危险，0.1 以下由于支撑
-            "dist_to_upper": safe_float(row['s_donchian_dist_upper'], 2),
-            "dist_to_lower": safe_float(row['s_donchian_dist_lower'], 2),
+            "donchian_break_pos": safe_float(row['donchian_break_pos'], 3), # 0~1 之间，直接反应在箱体的哪个位置
+            "donchian_width_pct": safe_float(row['donchian_width_norm'] * 100, 2), # 通道宽度，判断波动率
+            "squeeze_on_duration": int(row['s_squeeze_on_dur']), # 挤压持续时间，越长爆发潜力越大
         },
 
-        # --- C. 市场情绪与资金 (Sentiment & Funding) ---
-        "market_state": {
-            "rsi_mean_3h": safe_float(row['s_rsi_mean_H180m'], 1), # 平均 RSI 比瞬时 RSI 更稳
-            "funding_rate_annual": safe_float(row['funding_annualized'], 2),
-            "funding_premium_z": safe_float(row['funding_premium_z'], 2), # Z-score 很有用
-            "oi_change_rate": safe_float(row['d_oi_rate'] * 100, 2), # 持仓变化率
-            "sentiment_bias": "Bullish" if row['funding_premium'] > 0 else "Bearish"
+        # --- C. 宏观订单流汇聚 (Macro Order Flow - 寻找背离的圣杯) ---
+        "macro_flow": {
+            "flow_imbalance_3h": safe_float(row['s_bar_signed_vol_ratio_H180m'], 3), # 过去 3 小时主动买卖的整体倾斜度
+            "cvd_delta_1h": safe_float(row['s_bar_cvd_delta_H60m'], 3), # 过去 1 小时真实净流入体积
+            "cvd_delta_3h": safe_float(row['s_bar_cvd_delta_H180m'], 3),
+            "whale_activity_1h": safe_float(row['s_bar_avg_trade_size_H60m'], 3), # 过去 1 小时平均单笔大小，判断主力是否在场
+        },
+
+        # --- D. 衍生品燃料与情绪 (Fuel & Sentiment) ---
+        "market_fuel": {
+            "funding_annualized": safe_float(row['funding_annualized'], 2), # 宏观基调
+            "funding_premium_z": safe_float(row['funding_premium_z'], 3),   # Z-Score > 2.0 表示散户极度看多，反转在即
+            "oi_rate_1h": safe_float(row['s_oi_rate_H60m'], 6),             # 过去一小时 OI 变化趋势
+            "oi_rate_3h": safe_float(row['s_oi_rate_H180m'], 6),
         }
     }
 

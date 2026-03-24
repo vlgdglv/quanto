@@ -116,12 +116,12 @@ async def main():
     endpoints = make_endpoints_from_cfg(trading_cfg)
 
     container = await HttpContainer.start(trading_cfg, logger, 
-                                        #   api_key=OKX_API_KEY_PAPER,
-                                        #   secret_key=OKX_SECRET_PAPER,
-                                        #   passphrase=OKX_PASSPHRASE_PAPER,
-                                          api_key=OKX_API_KEY,
-                                          secret_key=OKX_SECRET,
-                                          passphrase=OKX_PASSPHRASE,
+                                          api_key=OKX_API_KEY_PAPER,
+                                          secret_key=OKX_SECRET_PAPER,
+                                          passphrase=OKX_PASSPHRASE_PAPER,
+                                        #   api_key=OKX_API_KEY,
+                                        #   secret_key=OKX_SECRET,
+                                        #   passphrase=OKX_PASSPHRASE,
                                           time_sync_interval_sec=600)
     
     http = container.http
@@ -144,12 +144,12 @@ async def main():
         url=trading_cfg["okx"]["ws"][mode]["private"],
         subscribe_args=orders_args,
         need_login=True,
-        # api_key=OKX_API_KEY_PAPER,
-        # secret_key=OKX_SECRET_PAPER,
-        # passphrase=OKX_PASSPHRASE_PAPER,
-        api_key=OKX_API_KEY,
-        secret_key=OKX_SECRET,
-        passphrase=OKX_PASSPHRASE,
+        api_key=OKX_API_KEY_PAPER,
+        secret_key=OKX_SECRET_PAPER,
+        passphrase=OKX_PASSPHRASE_PAPER,
+        # api_key=OKX_API_KEY,
+        # secret_key=OKX_SECRET,
+        # passphrase=OKX_PASSPHRASE,
         inst_name="orders"
     )
     orders_feed = OrdersFeed(orders_ws)

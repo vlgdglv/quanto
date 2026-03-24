@@ -168,15 +168,27 @@ round_map = {
     "s_donchian_mid_dev": 6,         # 相对中线的偏差，价格单位
     "s_ofi_sum_30m": 3,              # OFI 汇总，通常取 3 位足够
 
-    # —— 带 H{H}m 后缀的通配列（glob） ——
-    "s_mom_slope_H*m": 6,            # 动量斜率：通常是价格差/单位时间
-    "s_rsi_mean_H*m": 2,             # RSI 均值（0~100）
-    "s_rsi_std_H*m": 2,              # RSI 标准差，典型量级较小也可 2
-    "s_spread_bp_mean_H*m": 2,       # 基点均值
-    "s_cvd_delta_H*m": 3,            # CVD 的变化量
-    "s_kyle_ema_H*m": 6,             # Kyle λ 量级很小
-    "s_vpin_mean_H*m": 3,            # [0,1] 周期均值
-    "s_oi_rate_H*m": 6,              # OI 变化率，通常很小
+    # —— 带 H*m 后缀的跨周期滚动摘要列（glob） ——
+    
+    # 1. 收益率与趋势
+    "ret_H*m": 2,                    # 收益率（百分比）：如 1.25 或 -0.45，2位小数足够表征波段涨跌幅
+    "s_mom_slope_H*m": 6,            # 动量斜率：绝对数值通常极小，保持 6 位
+    "s_rsi_mean_H*m": 2,             # RSI 均值：0~100，2位
+    "s_rsi_std_H*m": 2,              # RSI 标准差：2位
+
+    # 2. 宏观订单流特征 (与 Bar 级特征对齐)
+    "s_bar_signed_vol_ratio_H*m": 3, # 多空力量失衡比 [-1, 1]：如 0.452，保留 3 位比 2 位能更好地捕捉微弱的边际变化
+    "s_bar_cvd_delta_H*m": 3,        # CVD 累计净值：绝对体积量纲，与基础 cvd 保持 3 位对齐
+    "s_bar_trade_count_H*m": 0,      # 累计成交笔数：纯整数计数，必须是 0！
+    "s_bar_avg_trade_size_H*m": 3,   # 平均单笔成交体积：与 cvd 量纲一致，保留 3 位
+
+    # 3. 流动性与知情交易
+    "s_bar_spread_bp_mean_H*m": 2,   # 盘口点差均值：基点(bp)单位，2位足够
+    "s_bar_vpin_mean_H*m": 3,        # VPIN 毒性均值：[0, 1]，保留 3 位
+    "s_bar_kyle_mean_H*m": 6,        # Kyle 冲击成本均值：量级极小，保持 6 位
+    
+    # 4. 衍生品燃料
+    "s_oi_rate_H*m": 6,              # OI 变化率：通常很小（如 0.000150），保持 6 位防止抹零
 }
 
 
@@ -721,7 +733,7 @@ class FundingState:
     next_funding_time: Optional[int] = None
     
      # 指标：premium 的 EW 均值/方差，用于 z-score
-    prem_rv: EWVarState = field(default_factory=lambda: EWVarState(lam=0.94))
+    prem_rv: EWVarState = field(default_factory=lambda: EWVarState(lam=0.996))
     # 平滑的 funding 与 premium
     fr_ema: EMAState = field(default_factory=lambda: EMAState(n=20, alpha=_alpha(20)))
     prem_ema: EMAState = field(default_factory=lambda: EMAState(n=20, alpha=_alpha(20)))
@@ -788,10 +800,10 @@ class BarAggState:
     def add_trade(self, sz: float, side: str, vpin: float, kyle: float):
         if side == "buy":
             self._buy_vol += sz
-            self._cvd_delta += vpin
+            self._cvd_delta += sz
         elif side == "sell":
             self._sell_vol += sz
-            self._cvd_delta -= vpin
+            self._cvd_delta -= sz
         self._trade_count += 1
 
         if not np.isnan(vpin):
@@ -1074,11 +1086,19 @@ class FeatureEnginePD:
                     macd_hist=(state.macd.hist if state.macd else np.nan),
                     rsi=(state.rsi.rsi if state.rsi else np.nan),
                     squeeze_on=(state.squeeze.squeeze_on if state.squeeze else False),
-                    spread_bp=(shared.micro.spread_bp if shared and shared.micro else np.nan),
-                    ofi_5s=(shared.micro.ofi_5s if shared and shared.micro else np.nan),
-                    cvd=(shared.cvd.cvd if shared and shared.cvd else np.nan),
-                    kyle_lambda=(shared.kyle.value if shared and shared.kyle else np.nan),
-                    vpin=(shared.vpin.vpin if shared and shared.vpin else np.nan),
+                    # spread_bp=(shared.micro.spread_bp if shared and shared.micro else np.nan),
+                    # ofi_5s=(shared.micro.ofi_5s if shared and shared.micro else np.nan),
+                    # cvd=(shared.cvd.cvd if shared and shared.cvd else np.nan),
+                    # kyle_lambda=(shared.kyle.value if shared and shared.kyle else np.nan),
+                    # vpin=(shared.vpin.vpin if shared and shared.vpin else np.nan),
+                    bar_spread_bp_mean=state.bar_agg.bar_spread_bp_mean, 
+                    bar_signed_vol_ratio=state.bar_agg.bar_signed_vol_ratio,
+                    bar_cvd_delta=state.bar_agg.bar_cvd_delta, 
+                    bar_trade_count=state.bar_agg.bar_trade_count,
+                    bar_avg_trade_size=state.bar_agg.bar_avg_trade_size, 
+                    bar_vpin_mean=state.bar_agg.bar_vpin_mean, 
+                    bar_kyle_mean=state.bar_agg.bar_kyle_mean,
+                    
                     donchian_upper=(state.donchian.upper if state.donchian else np.nan),
                     donchian_lower=(state.donchian.lower if state.donchian else np.nan),
                     atr=(state.atr.atr if state.atr else np.nan),
@@ -1282,17 +1302,17 @@ class FeatureEnginePD:
                 "bar_kyle_mean": state.bar_agg.bar_kyle_mean,
 
                 "funding_rate": src_funding.funding_rate,
-                "funding_rate_ema": src_funding.fr_ema.value,
                 "funding_premium": src_funding.premium,
-                "funding_premium_ema": src_funding.prem_ema.value,
                 "funding_premium_z": src_funding.premium_z,
                 "funding_annualized": src_funding.annualized,
-                "funding_time": ts_to_str(src_funding.funding_time) if src_funding.funding_time else None,
-                "next_funding_time": ts_to_str(src_funding.next_funding_time) if src_funding.next_funding_time else None,
-                "funding_time_to_next_min": (
-                    max((src_funding.next_funding_time - ts)/60000.0, 0.0)
-                    if src_funding.next_funding_time else np.nan
-                ),
+                # "funding_rate_ema": src_funding.fr_ema.value,
+                # "funding_premium_ema": src_funding.prem_ema.value,
+                # "funding_time": ts_to_str(src_funding.funding_time) if src_funding.funding_time else None,
+                # "next_funding_time": ts_to_str(src_funding.next_funding_time) if src_funding.next_funding_time else None,
+                # "funding_time_to_next_min": (
+                    # max((src_funding.next_funding_time - ts)/60000.0, 0.0)
+                    # if src_funding.next_funding_time else np.nan
+                # ),
                 "oi": src_oi.oi, "oiCcy": src_oi.oiCcy, "oiUsd": src_oi.oiUsd,
                 "d_oi": src_oi.d_oi, "d_oi_rate": src_oi.d_oi_rate,
                 "oi_ema": src_oi.oi_ema.value,

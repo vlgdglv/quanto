@@ -13,45 +13,46 @@ from .trend_agent import TrendOutput
 from datetime import datetime
 file_name_ts = datetime.now().strftime("%Y%m%d%H%M%S")
 
+
 # =========================================================
-#  2. Trigger Snapshot (15m) - 关注微观流、瞬时动量、异动
+#  2. Trigger Snapshot (15m) - 关注微观流、裸K形态、瞬时异动
 # =========================================================
 def build_snapshot_for_trigger(frame: FeatureFrame) -> FeatureFrame:
     row: Dict[str, Any] = frame.features
 
     features_dict = {
-        # --- A. 瞬时动量 (Immediate Momentum) ---
-        "small_trend": {
+        # --- A. 战术价格行为 (Price Action & Shapes) ---
+        "price_action": {
             "price": row['c'],
-            "ema_fast_dist": safe_float((row['c'] - row['ema_fast']), 5),
-            "macd_hist": safe_float(row['macd_hist'], 6), # 15m 级别要看精度高一点
+            "atr_pct": safe_float(row['atr_pct'] * 100, 3), # 决定止损宽度的核心：当前 ATR 占价格百分比
+            "body_ratio": safe_float(row['body_ratio'], 3), # 实体比例
+            "upper_wick_ratio": safe_float(row['upper_wick_ratio'], 3), # 上影线比例 (找做空衰竭)
+            "lower_wick_ratio": safe_float(row['lower_wick_ratio'], 3), # 下影线比例 (找做多接针)
+            "zclose_vs_ema_fast": safe_float(row['zclose_vs_ema_fast'], 3), # 战术级偏离度，防止追高
+        },
+
+        # --- B. 瞬时振荡器 (Immediate Oscillators) ---
+        "oscillators": {
             "rsi": safe_float(row['rsi'], 1),
-            "kdj_j": safe_float(row['kdj_j'], 1), # KDJ J值反应极快
+            "kdj_j": safe_float(row['kdj_j'], 1), # 敏感的极值指标
+            "macd_hist": safe_float(row['macd_hist'], 6),
         },
 
-        # --- B. 微观结构 (Microstructure - YOUR ALPHA) ---
-        "micro_flow": {
-            "cvd_cumulative": safe_float(row['cvd'], 1),   # 累计成交量差
-            "ofi_5s": safe_float(row['ofi_5s'], 2),        # 订单流不平衡 (Order Flow Imbalance)
-            "vpin": safe_float(row['vpin'], 2),            # 毒性流 (Informed Trading)
-            "kyle_lambda": safe_float(row['kyle_lambda'], 2), # 市场深度/价格冲击成本
-            "microprice_delta": safe_float(row['microprice'] - row['c'], 5), # 微观价格偏离
-            "spread_bp": safe_float(row['spread_bp'], 2)
-        },
-
-        # --- C. 爆发力 (Volatility & Squeeze) ---
-        "volatility": {
-            "squeeze_on": bool(row['squeeze_on'] == 0), # TTM Squeeze 信号
-            "squeeze_ratio": safe_float(row['squeeze_ratio'], 2),
-            "atr": safe_float(row['atr'], 4),
-            "er": safe_float(row['er'], 2) # Efficiency Ratio (Kama Efficiency)
+        # --- C. 15m 真实微观战斗局势 (Micro-flow Truth) ---
+        "micro_battle": {
+            "bar_signed_vol_ratio": safe_float(row['bar_signed_vol_ratio'], 3), # 本根 K 线多空谁赢了 [-1, 1]
+            "bar_cvd_delta": safe_float(row['bar_cvd_delta'], 3),               # 绝对净流入体积
+            "bar_avg_trade_size": safe_float(row['bar_avg_trade_size'], 3),     # 本根 K 线的平均单笔（找机构大单）
+            "bar_vpin_mean": safe_float(row['bar_vpin_mean'], 3),               # 毒性/单向冲击概率
+            "bar_kyle_mean": safe_float(row['bar_kyle_mean'], 6),               # 盘口脆弱度
         },
         
-        # --- D. 资金异动 (Flow Anomalies) ---
-        # 15m 级别只看剧烈的资金异动
-        "anomalies": {
-            "oi_surge": True if abs(row['d_oi_rate']) > 0.01 else False, # 突发持仓变化
-            "funding_pressure": safe_float(row['funding_rate'], 6)
+        # --- D. 流动性与异动警报 (Liquidity & Anomalies) ---
+        "risk_anomalies": {
+            "spread_bp_mean": safe_float(row['bar_spread_bp_mean'], 2),
+            "spread_bp_max": safe_float(row['bar_spread_bp_max'], 2), # 极其重要：15m 内是否发生过流动性真空/拔网线？
+            "oi_surge_now": True if abs(row['d_oi_rate']) > 0.005 else False, # 此刻是否有剧烈增减仓
+            "squeeze_on": bool(row['squeeze_on'] == 1), # 结合 1H 的 squeeze_dur 看爆发节点
         }
     }
 

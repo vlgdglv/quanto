@@ -65,6 +65,13 @@ class RollingDeque:
     
     def last(self) -> float:
         return self.dq[-1] if len(self.dq) > 0 else np.nan
+    
+    def first(self) -> float:
+        return self.dq[0] if len(self.dq) > 0 else np.nan
+
+    def __len__(self):
+        return len(self.dq)
+    
 
 @dataclass
 class RollingOLSSlope:
@@ -135,18 +142,24 @@ class BoolDuration:
 class SummaryState:
     """按 tf 维护，不同 horizon 各有一套滑窗"""
     # 窗口：horizon 步长（bar 数）在构造时设定
-    win_mom: Dict[str, RollingDeque] = field(default_factory=dict)     # 动量：价差/ema_spread/macd_hist
-    win_rsi: Dict[str, RollingDeque] = field(default_factory=dict)     # rsi
-    win_spread: Dict[str, RollingDeque] = field(default_factory=dict)  # 点差
-    win_ofi: Dict[str, RollingDeque] = field(default_factory=dict)     # ofi 汇总
-    win_cvd: Dict[str, RollingDeque] = field(default_factory=dict)     # cvd 增量
-    win_kyle: Dict[str, EWMean] = field(default_factory=dict)          # kyle 低频平滑
-    win_vpin: Dict[str, EWMean] = field(default_factory=dict)          # vpin 平滑
-    win_oi_rate: Dict[str, RollingDeque] = field(default_factory=dict) # oi 变化率
-    # 斜率/趋势：用 EMA 平滑的差分近似 slope
-    slope_mom: Dict[str, EWMean] = field(default_factory=dict)
-    slope_rsi: Dict[str, EWMean] = field(default_factory=dict)
-    # 连续性/状态时长
+    win_close: Dict[str, RollingDeque] = field(default_factory=dict)       # 收盘价（用于算收益率）
+    win_mom: Dict[str, RollingDeque] = field(default_factory=dict)         # 动量 (ema_spread)
+    win_rsi: Dict[str, RollingDeque] = field(default_factory=dict)         # RSI
+    slope_mom: Dict[str, EWMean] = field(default_factory=dict)             # 动量斜率近似
+
+    # 新版 Bar 级订单流微观特征滑窗
+    win_signed_vol_ratio: Dict[str, RollingDeque] = field(default_factory=dict)
+    win_cvd_delta: Dict[str, RollingDeque] = field(default_factory=dict)   # K线内 CVD 净值（需求 Sum）
+    win_trade_count: Dict[str, RollingDeque] = field(default_factory=dict) # K线内成交笔数（需求 Sum）
+    win_avg_trade_size: Dict[str, RollingDeque] = field(default_factory=dict)
+    
+    # 新版盘口与知情交易特征滑窗
+    win_spread_mean: Dict[str, RollingDeque] = field(default_factory=dict)
+    win_vpin: Dict[str, RollingDeque] = field(default_factory=dict)
+    win_kyle: Dict[str, RollingDeque] = field(default_factory=dict)
+    win_oi_rate: Dict[str, RollingDeque] = field(default_factory=dict)
+    
+    # 连续性/状态时长 (无需按 horizon 分隔)
     streak_macd_pos: StreakCounter = field(default_factory=StreakCounter)
     streak_macd_neg: StreakCounter = field(default_factory=StreakCounter)
     regime_squeeze_on: BoolDuration = field(default_factory=BoolDuration)
@@ -188,16 +201,22 @@ class FeatureSummarizer:
         for H in self.horizons_min:
             steps = max(int(H // minutes), 1)
             tag = f"H{H}m"
+
+            st.win_close[tag] = RollingDeque(steps + 1) # 多留一个位置算两端收益率
             st.win_mom[tag] = RollingDeque(steps)
             st.win_rsi[tag] = RollingDeque(steps)
-            st.win_spread[tag] = RollingDeque(steps)
-            st.win_ofi[tag] = RollingDeque(max(int(30 // minutes), 1))  # 固定 30m 汇总窗口
-            st.win_cvd[tag] = RollingDeque(steps)
-            st.win_kyle[tag] = EWMean(self.ew_alpha)
-            st.win_vpin[tag] = EWMean(self.ew_alpha)
+            
+            st.win_signed_vol_ratio[tag] = RollingDeque(steps)
+            st.win_cvd_delta[tag] = RollingDeque(steps)
+            st.win_trade_count[tag] = RollingDeque(steps)
+            st.win_avg_trade_size[tag] = RollingDeque(steps)
+            
+            st.win_spread_mean[tag] = RollingDeque(steps)
+            st.win_vpin[tag] = RollingDeque(steps)
+            st.win_kyle[tag] = RollingDeque(steps)
             st.win_oi_rate[tag] = RollingDeque(steps)
+            
             st.slope_mom[tag] = EWMean(self.slope_alpha)
-            st.slope_rsi[tag] = EWMean(self.slope_alpha)
         self._states[key] = st
         return st
 
@@ -205,12 +224,23 @@ class FeatureSummarizer:
                        close: float,
                        ema_fast: float, ema_slow: float,
                        macd_hist: float, rsi: float,
-                       squeeze_on: bool, spread_bp: float,
-                       ofi_5s: float, cvd: float,
-                       kyle_lambda: float, vpin: float,
+                       squeeze_on: bool, 
+
+                       bar_spread_bp_mean: float, 
+                       bar_signed_vol_ratio: float,
+                       bar_cvd_delta: float, 
+                       bar_trade_count: int,
+                       bar_avg_trade_size: float, 
+                       bar_vpin_mean: float, 
+                       bar_kyle_mean: float,
+
                        donchian_upper: float, donchian_lower: float, atr: float,
-                       d_oi_rate: float) -> Dict[str, float]:
+                       d_oi_rate: float
+                    ) -> Dict[str, float]:
+
+        out: Dict[str, float] = {}
         st = self._ensure_state(instId, tf)
+        
         # —— 基础派生
         ema_spread = (ema_fast - ema_slow) if (ema_fast is not None and ema_slow is not None) else np.nan
         # macd 连续性（两种 streak 分开算）
@@ -218,51 +248,6 @@ class FeatureSummarizer:
         macd_neg_len = st.streak_macd_neg.update(-macd_hist if macd_hist is not None else 0.0) if macd_hist and macd_hist < 0 else (st.streak_macd_neg.update(0.0))
         # 布尔 regime 时长
         sq_dur = st.regime_squeeze_on.update(bool(squeeze_on) if squeeze_on is not None else False)
-
-        # —— 逐 horizon 更新
-        out: Dict[str, float] = {}
-        for H in self.horizons_min:
-            tag = f"H{H}m"
-
-            # 动量窗口（用 ema_spread 或 macd_hist 皆可；这里取 ema_spread 更稳定）
-            if not np.isnan(ema_spread):
-                st.win_mom[tag].push(ema_spread)
-                # slope 近似：当前-均值 的 EW 平滑
-                mom_slope = st.slope_mom[tag].update(ema_spread - st.win_mom[tag].mean())
-                out[f"s_mom_slope_{tag}"] = mom_slope
-
-            # rsi 窗口
-            if rsi is not None and not np.isnan(rsi):
-                st.win_rsi[tag].push(rsi)
-                out[f"s_rsi_mean_{tag}"] = st.win_rsi[tag].mean()
-                out[f"s_rsi_std_{tag}"]  = st.win_rsi[tag].std()
-
-            # 点差
-            if spread_bp is not None and not np.isnan(spread_bp):
-                st.win_spread[tag].push(spread_bp)
-                out[f"s_spread_bp_mean_{tag}"] = st.win_spread[tag].mean()
-
-            # ofi：统一用 30m 汇总（窗口初始化时已固定 30m）
-            if ofi_5s is not None and not np.isnan(ofi_5s):
-                st.win_ofi[tag].push(ofi_5s)  # 注意：传的是 bar 末 5s ofi 的“代表值”；如果有 bar 内累加，换成累计
-            out["s_ofi_sum_30m"] = st.win_ofi[tag].sum()
-
-            # cvd 增量（相对窗口首末）
-            if cvd is not None and not np.isnan(cvd):
-                st.win_cvd[tag].push(cvd)
-                # 用末值-均值近似窗口增量
-                out[f"s_cvd_delta_{tag}"] = (st.win_cvd[tag].last() - st.win_cvd[tag].mean())
-
-            # kyle/vpin 平滑
-            if kyle_lambda is not None and not np.isnan(kyle_lambda):
-                out[f"s_kyle_ema_{tag}"] = st.win_kyle[tag].update(kyle_lambda)
-            if vpin is not None and not np.isnan(vpin):
-                out[f"s_vpin_mean_{tag}"] = st.win_vpin[tag].update(vpin)
-
-            # OI 变化率
-            if d_oi_rate is not None and not np.isnan(d_oi_rate):
-                st.win_oi_rate[tag].push(d_oi_rate)
-                out[f"s_oi_rate_{tag}"] = st.win_oi_rate[tag].mean()
 
         # 非 horizon 相关的摘要
         out["s_macd_pos_streak"] = float(macd_pos_len or 0)
@@ -275,6 +260,63 @@ class FeatureSummarizer:
             out["s_donchian_dist_upper"] = (donchian_upper - close) / atr
             out["s_donchian_dist_lower"] = (close - donchian_lower) / atr
             out["s_donchian_mid_dev"]    = (close - mid) / atr
+        
+        # —— 逐 horizon 更新
+        for H in self.horizons_min:
+            tag = f"H{H}m"
+
+            if close is not None:
+                st.win_close[tag].push(close)
+                if len(st.win_close[tag]) >= 2:
+                    ret = (st.win_close[tag].last() / st.win_close[tag].first()) - 1.0
+                    out[f"ret_{tag}"] = ret * 100.0  # 转为百分比收益率
+                    
+            # 动量窗口（用 ema_spread 或 macd_hist 皆可；这里取 ema_spread 更稳定）
+            if not np.isnan(ema_spread):
+                st.win_mom[tag].push(ema_spread)
+                mom_slope = st.slope_mom[tag].update(ema_spread - st.win_mom[tag].mean())
+                out[f"s_mom_slope_{tag}"] = mom_slope
+
+            # rsi 窗口
+            if rsi is not None and not np.isnan(rsi):
+                st.win_rsi[tag].push(rsi)
+                out[f"s_rsi_mean_{tag}"] = st.win_rsi[tag].mean()
+                out[f"s_rsi_std_{tag}"]  = st.win_rsi[tag].std()
+
+            # 宏观订单流汇聚 (最核心的增量特征)
+            if bar_signed_vol_ratio is not None and not np.isnan(bar_signed_vol_ratio):
+                st.win_signed_vol_ratio[tag].push(bar_signed_vol_ratio)
+                out[f"s_bar_signed_vol_ratio_{tag}"] = st.win_signed_vol_ratio[tag].mean()
+                
+            if bar_cvd_delta is not None and not np.isnan(bar_cvd_delta):
+                st.win_cvd_delta[tag].push(bar_cvd_delta)
+                out[f"s_bar_cvd_delta_{tag}"] = st.win_cvd_delta[tag].sum() # CVD 用求和！
+                
+            if bar_trade_count is not None:
+                st.win_trade_count[tag].push(bar_trade_count)
+                out[f"s_bar_trade_count_{tag}"] = st.win_trade_count[tag].sum() # 笔数求和！
+                
+            if bar_avg_trade_size is not None and not np.isnan(bar_avg_trade_size):
+                st.win_avg_trade_size[tag].push(bar_avg_trade_size)
+                out[f"s_bar_avg_trade_size_{tag}"] = st.win_avg_trade_size[tag].mean()
+            
+            # 流动性与知情交易
+            if bar_spread_bp_mean is not None and not np.isnan(bar_spread_bp_mean):
+                st.win_spread_mean[tag].push(bar_spread_bp_mean)
+                out[f"s_bar_spread_bp_mean_{tag}"] = st.win_spread_mean[tag].mean()
+                
+            if bar_vpin_mean is not None and not np.isnan(bar_vpin_mean):
+                st.win_vpin[tag].push(bar_vpin_mean)
+                out[f"s_bar_vpin_mean_{tag}"] = st.win_vpin[tag].mean()
+                
+            if bar_kyle_mean is not None and not np.isnan(bar_kyle_mean):
+                st.win_kyle[tag].push(bar_kyle_mean)
+                out[f"s_bar_kyle_mean_{tag}"] = st.win_kyle[tag].mean()
+
+            # 持仓量变化
+            if d_oi_rate is not None and not np.isnan(d_oi_rate):
+                st.win_oi_rate[tag].push(d_oi_rate)
+                out[f"s_oi_rate_{tag}"] = st.win_oi_rate[tag].mean()
 
         return out
 
@@ -283,16 +325,20 @@ class FeatureSummarizer:
         cols = [
             "s_macd_pos_streak","s_macd_neg_streak","s_squeeze_on_dur",
             "s_donchian_dist_upper","s_donchian_dist_lower","s_donchian_mid_dev",
-            "s_ofi_sum_30m",
         ]
         for H in horizons_min:
             tag = f"H{H}m"
             cols += [
+                f"ret_{tag}",
                 f"s_mom_slope_{tag}",
                 f"s_rsi_mean_{tag}", f"s_rsi_std_{tag}",
-                f"s_spread_bp_mean_{tag}",
-                f"s_cvd_delta_{tag}",
-                f"s_kyle_ema_{tag}", f"s_vpin_mean_{tag}",
+                f"s_bar_signed_vol_ratio_{tag}",
+                f"s_bar_cvd_delta_{tag}",
+                f"s_bar_trade_count_{tag}", 
+                f"s_bar_avg_trade_size_{tag}",
+                f"s_bar_spread_bp_mean_{tag}",
+                f"s_bar_vpin_mean_{tag}",
+                f"s_bar_kyle_mean_{tag}",
                 f"s_oi_rate_{tag}",
             ]
         return cols
