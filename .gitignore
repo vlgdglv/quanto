@@ -90,3 +90,7 @@ dmypy.json
 prompts/*.txt
 
 trash_bin/
+
+.project_cc/
+
+.claudeignore
