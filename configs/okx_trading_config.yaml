@@ -25,6 +25,16 @@ trading:
     timeout_ms: 5000
   ws:
     reconnect_backoff_ms: [500, 1000, 2000, 5000]
+    subscriptions:
+      orders:
+        - channel: orders
+          instType: SWAP
+      # Future extensibility for other private channels
+      # account:
+      #   - channel: account
+      # positions:
+      #   - channel: positions
+      #     instType: SWAP
   timeouts:
     rest_ms: 3000
   retries:

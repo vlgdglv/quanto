@@ -135,10 +135,10 @@ async def main():
         logger=logger
     )
     
-    orders_args = [{
-        "channel":"orders",
-        "instType":"SWAP",   
-    }]  
+    # Load orders subscription args from config
+    orders_args = trading_cfg.get("trading", {}).get("ws", {}).get("subscriptions", {}).get("orders", [
+        {"channel": "orders", "instType": "SWAP"}  # fallback for backward compatibility
+    ])
     
     orders_ws = WSClient(
         url=trading_cfg["okx"]["ws"][mode]["private"],

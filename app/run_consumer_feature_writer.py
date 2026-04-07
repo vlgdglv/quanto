@@ -155,10 +155,11 @@ class ParquetSink:
 class CSVSink:
     """
     以 (inst, tf) 为粒度写入：
-      <BASE_DIR>/<inst>/<tf>/data-<runid>.csv
+      <BASE_DIR>/<inst>/<tf>/data-<date>.csv
     - 仅使用 Python 标准库 csv
     - 采用行级 append，header 首次创建时写入
     - flush 时执行 f.flush() + os.fsync()，以降低异常退出导致的数据丢失
+    - 每天自动创建新文件，确保每个文件只包含一天的数据
     """
     # FIELDS = ["inst", "tf", "ts_close", "feature_version", "engine_id", "features_json"]
 
@@ -173,28 +174,28 @@ class CSVSink:
         self._writers: Dict[Tuple[str, str], csv.DictWriter] = {}
         self._headers: Dict[Tuple[str, str], List[str]] = {}
         self._has_header_written: Dict[Tuple[str, str], bool] = {}
+        self._current_dates: Dict[Tuple[str, str], str] = {}  # Track current date for each key
         self._last_flush_mono = time.monotonic()
-        self._runid = datetime.now().strftime("%y%m%d_%H%M")
         self.stream_name = stream_name
         self.total_write_cnt = 0
 
-    def _path_for(self, inst: str, tf: str) -> Path:
+    def _path_for(self, inst: str, tf: str, date_str: str) -> Path:
         p = self.base_dir / inst / tf
         p.mkdir(parents=True, exist_ok=True)
-        return p / f"data-{self._runid}.csv"
+        return p / f"data-{date_str}.csv"
 
-    def _ensure_writer(self, key: Tuple[str, str], header: List[str]):
+    def _ensure_writer(self, key: Tuple[str, str], header: List[str], date_str: str):
         if key in self._writers:
             return
         inst, tf = key
-        path = self._path_for(inst, tf)
+        path = self._path_for(inst, tf, date_str)
         self._files[key] = path
 
         # newline='' 防止多余空行；buffering=1 行缓冲；encoding=utf-8
         # 注意：部分系统上 “行缓冲” 仅对交互式终端完全生效，但我们仍然会在 flush 中强制 fsync。
-        fp = open(path, mode="a", encoding="utf-8", newline="", buffering=1)
+        fp = open(path, mode='a', encoding='utf-8', newline='', buffering=1)
         self._fps[key] = fp
-        writer = csv.DictWriter(fp, fieldnames=header, extrasaction="ignore")
+        writer = csv.DictWriter(fp, fieldnames=header, extrasaction='ignore')
         self._writers[key] = writer
 
         # 若是新建文件（大小为0），写 header
@@ -204,6 +205,28 @@ class CSVSink:
             fp.flush()
             os.fsync(fp.fileno())
         self._has_header_written[key] = True
+
+    def _close_writer_for_key(self, key: Tuple[str, str]):
+        """Close and clean up writer resources for a specific key"""
+        if key in self._fps:
+            with contextlib.suppress(Exception):
+                self._fps[key].flush()
+                os.fsync(self._fps[key].fileno())
+                self._fps[key].close()
+            del self._fps[key]
+
+        if key in self._writers:
+            del self._writers[key]
+
+        if key in self._files:
+            del self._files[key]
+
+        if key in self._has_header_written:
+            del self._has_header_written[key]
+
+    def _get_date_from_timestamp(self, ts: int) -> str:
+        """Convert timestamp to date string (YYYYMMDD format)"""
+        return datetime.fromtimestamp(ts / 1000).strftime("%Y%m%d")
 
     def _row_from_payload(self, p: Dict) -> Dict:
         """
@@ -222,6 +245,28 @@ class CSVSink:
             return
         key = (inst, tf)
 
+        # Extract timestamp to determine the date for this record
+        ts = int(payload.get("ts_close") or payload.get("ts") or 0)
+        if ts == 0:
+            logger.warning(f"No timestamp found in payload for {inst}/{tf}, skipping")
+            return
+
+        current_date = self._get_date_from_timestamp(ts)
+
+        # Check if we need to rotate to a new file for this key
+        existing_date = self._current_dates.get(key)
+        if existing_date and existing_date != current_date:
+            # New day detected, close current writer and flush buffer
+            buf = self._buffers.get(key, [])
+            if buf:
+                await self.flush()  # Flush any remaining data
+
+            self._close_writer_for_key(key)
+            logger.info(f"Rotated CSV file for {inst}/{tf}: {existing_date} -> {current_date}")
+
+        # Update current date tracking
+        self._current_dates[key] = current_date
+
         row = self._row_from_payload(payload)
 
         buf = self._buffers.setdefault(key, [])
@@ -230,7 +275,7 @@ class CSVSink:
         if key not in self._headers:
             header = list(row.keys())
             self._headers[key] = header
-            self._ensure_writer(key, header)
+            self._ensure_writer(key, header, current_date)
 
         now = time.monotonic()
         if len(buf) >= self.flush_rows or (now - self._last_flush_mono) >= self.flush_sec:
@@ -253,7 +298,11 @@ class CSVSink:
                 # 若出现异常情况（无 header），用首条数据的键补救
                 header = sorted(list(rows[0].keys()))
                 self._headers[key] = header
-                self._ensure_writer(key, header)
+
+            # Ensure writer exists with current date
+            current_date = self._current_dates.get(key, datetime.now().strftime("%Y%m%d"))
+            if key not in self._writers:
+                self._ensure_writer(key, header, current_date)
 
             writer = self._writers[key]
             fp = self._fps[key]
