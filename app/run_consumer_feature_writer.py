@@ -226,7 +226,7 @@ class CSVSink:
 
     def _get_date_from_timestamp(self, ts: int) -> str:
         """Convert timestamp to date string (YYYYMMDD format)"""
-        return datetime.fromtimestamp(ts / 1000).strftime("%Y%m%d")
+        return datetime.strptime(str(ts), "%Y%m%d%H%M%S").strftime("%Y%m%d")
 
     def _row_from_payload(self, p: Dict) -> Dict:
         """
@@ -268,7 +268,7 @@ class CSVSink:
         self._current_dates[key] = current_date
 
         row = self._row_from_payload(payload)
-
+    
         buf = self._buffers.setdefault(key, [])
         buf.append(row)
 
