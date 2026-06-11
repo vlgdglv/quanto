@@ -2,7 +2,7 @@
 import asyncio, signal, os, argparse
 import uvicorn
 import contextlib
-
+from utils.logger import logger
 from utils.config import load_cfg
 from feature.manager import WorkerManager
 from feature.control import build_app
@@ -18,12 +18,23 @@ def build_parser():
     p.add_argument("--port",      type=int, default=int(env_default("CONTROL_PORT", "0") or 0))
     p.add_argument("--token",     default=env_default("CONTROL_TOKEN", None))
     p.add_argument("--config-path", default="configs/okx_feature_config.yaml")
+    p.add_argument("--proxy", default=env_default("OKX_PROXY", "socks5://127.0.0.1:1080"))
     return p
 
 async def main():
     args = build_parser().parse_args()
     
+    if args.proxy:
+        os.environ["HTTP_PROXY"] = args.proxy
+        os.environ["HTTPS_PROXY"] = args.proxy
+        os.environ["ALL_PROXY"] = args.proxy
+        logger.info(f"[Network] Global proxy enabled: {args.proxy}")
+        
     cfg = load_cfg(args.config_path)
+    
+    if "network" not in cfg:
+        cfg["network"] = {}
+    cfg["network"]["proxy"] = args.proxy
     
     redis_dsn = args.redis_dsn
     stream = args.stream or cfg.get("redis", {}).get("stream", None)

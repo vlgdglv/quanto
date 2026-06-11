@@ -4,6 +4,8 @@ import contextlib
 import asyncio, json, time, websockets, random
 from typing import Dict, Any, Callable, Awaitable, Iterable, Optional, List
 from websockets.exceptions import InvalidStatus, ConnectionClosedError, ConnectionClosedOK
+from python_socks.async_.asyncio import Proxy
+import urllib.parse
 
 Json = Dict[str, Any]
 
@@ -19,7 +21,8 @@ class WSClient:
         reconnect_cap_s: int = 20,
         inst_name: str = "",
         sub_batch_size: int | None = None, 
-        sub_gap_s: float = 0.05
+        sub_gap_s: float = 0.05,
+        proxy_url: Optional[str] = None
     ):
         self.url = url
         self.args = list(subscribe_args)
@@ -46,7 +49,10 @@ class WSClient:
         self._sub_batch_size = sub_batch_size
         self._sub_gap_s = sub_gap_s
 
-        logger.info(f"WSClient {inst_name} init url={url} need_login={need_login} "
+        self.proxy_url = proxy_url
+
+        proxy_info = f" proxy={proxy_url}" if proxy_url else ""
+        logger.info(f"WSClient {inst_name} init url={url}{proxy_info} need_login={need_login} "
                     f"ping_interval={ping_interval}s reconnect_cap_s={reconnect_cap_s} "
                     f"subs={len(list(subscribe_args))}")
         
@@ -125,6 +131,26 @@ class WSClient:
             except Exception:
                 return
             await asyncio.sleep(self.ping_interval)
+            
+    async def _create_connection(self):
+        if not self.proxy_url:
+            return websockets.connect(self.url, ping_interval=None, close_timeout=30)
+        
+        logger.info(f"WS {self.inst_name} connecting via proxy: {self.proxy_url}")
+        parsed_url = urllib.parse.urlparse(self.url)
+        host = parsed_url.hostname
+        port = parsed_url.port or (443 if parsed_url.scheme == 'wss' else 80)
+
+        proxy = Proxy.from_url(self.proxy_url)
+        sock = await proxy.connect(dest_host=host, dest_port=port)
+        
+        return websockets.connect(
+            self.url,
+            sock=sock,
+            server_hostname=host,
+            ping_interval=None,
+            close_timeout=30
+        )
     
     async def run_forever(self, on_json: Callable[[Json], Awaitable[None]] = None):
         retry = 0
@@ -134,7 +160,7 @@ class WSClient:
                 await asyncio.sleep(random.uniform(0.0, 0.5))
 
                 logger.info(f"WS {self.inst_name} connect: connecting to {self.url} (retry={retry})")
-                async with websockets.connect(self.url, ping_interval=None, close_timeout=30) as ws:
+                async with (await self._create_connection()) as ws:
                     self._ws = ws
                     logger.info(f"WS {self.inst_name} connect: connected")
                     loop = asyncio.get_running_loop()

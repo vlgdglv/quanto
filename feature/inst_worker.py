@@ -61,7 +61,8 @@ class InstrumentWorker:
     async def start(self):
         initial = build_args_for_one_inst_grouped_by_kind(self.cfg, self.inst)  # ws_kind -> args[]
         auth = self._auth_bundle()
-
+        proxy_url = self.cfg.get("network", {}).get("proxy", None)
+        
         for ws_kind, args in initial.items():
             if not args: continue
             url = self._url_for_kind(ws_kind)
@@ -72,6 +73,7 @@ class InstrumentWorker:
                 api_key=auth["api_key"], secret_key=auth["secret_key"], passphrase=auth["passphrase"],
                 ping_interval=15,
                 inst_name=f"{self.inst}_{ws_kind}",
+                proxy_url=proxy_url
             )
             c.bind_queue(self._q, put_timeout_ms=50, drop_when_full=True, microbatch=False, microbatch_maxn=64, microbatch_ms=10)
             self.clients[ws_kind] = c
