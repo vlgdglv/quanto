@@ -39,7 +39,6 @@ class FeatureEngineProcessor:
             "open-interest": ("update_open_interest", False),
         }
 
-        self.on_rows_async: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.on_rows_async = on_snapshot
         self._emit_last_ts: Dict[Tuple[str, str], Optional[int]] = {}
         self.publisher = publisher

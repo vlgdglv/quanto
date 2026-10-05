@@ -732,7 +732,7 @@ class FundingState:
     funding_time: Optional[int] = None
     next_funding_time: Optional[int] = None
     
-     # 指标：premium 的 EW 均值/方差，用于 z-score
+    # 指标：premium 的 EW 均值/方差，用于 z-score
     prem_rv: EWVarState = field(default_factory=lambda: EWVarState(lam=0.996))
     # 平滑的 funding 与 premium
     fr_ema: EMAState = field(default_factory=lambda: EMAState(n=20, alpha=_alpha(20)))
@@ -870,7 +870,7 @@ class SeriesState:
     prev_close: Optional[float] = None
     ofi_win_ms: int = 5000
     ofi_deq: Deque[Tuple[int, float]] = field(default_factory=deque)
-
+    _ofi_running_sum: float = 0.0
     bar_agg: BarAggState = field(default_factory=BarAggState)
 
     
@@ -988,8 +988,8 @@ class FeatureEnginePD:
             state.micro.spread_bp = spread_bp
 
             # print("state.micro.spread_bp after: ", state.micro.spread_bp)
-            for state in tf_states:
-                state.bar_agg.add_books(spread_bp)
+            for ts_state in tf_states:
+                ts_state.bar_agg.add_books(spread_bp)
 
             self.updates += 1
 
@@ -1009,9 +1009,10 @@ class FeatureEnginePD:
             state.ofi_deq.append((ts, delta))
 
             lo = ts - state.ofi_win_ms
+            state._ofi_running_sum += delta
             while state.ofi_deq and state.ofi_deq[0][0] < lo:
-                state.ofi_deq.popleft()
-            state.micro.ofi_5s = sum(x[1] for x in state.ofi_deq)
+                state._ofi_running_sum -= state.ofi_deq.popleft()[1]
+            state.micro.ofi_5s = state._ofi_running_sum
 
             cvd_update(state.cvd, delta)
             vpin = vpin_update(state.vpin, delta)
@@ -1336,35 +1337,6 @@ class FeatureEnginePD:
         if do_round:
             df = round_numeric_columns(df, round_map, do_round=True)
         return df
-
-    def _write_last_summary(self, state, ts: int, summary: dict):
-        """把本根bar的 summary 写到 state 上，顺便做基本清洗"""
-        if summary is None:
-            summary = {}
-        clean = {}
-        for k, v in summary.items():
-            if v is None:
-                clean[k] = np.nan
-            elif isinstance(v, bool):
-                clean[k] = float(v)
-            else:
-                try:
-                    fv = float(v)
-                    clean[k] = fv
-                except Exception:
-                    continue
-        state._last_summary = clean
-        state._last_summary_ts = int(ts) if ts is not None else None
-
-
-    def _read_last_summary_for_ts(self, state, ts: int) -> dict:
-        """
-        只有当缓存的 summary 与当前 ts 一致才返回；否则返回空 dict。
-        这样避免把上一根 bar 的摘要误并到本根。
-        """
-        if getattr(state, "_last_summary_ts", None) == int(ts):
-            return getattr(state, "_last_summary", {}) or {}
-        return {}
 
     def columns(self):
         basic_colums = [

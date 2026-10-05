@@ -1,4 +1,5 @@
 # feature/manager.py
+import copy
 import asyncio, contextlib
 from typing import Dict, Any, List
 
@@ -31,7 +32,7 @@ class WorkerManager:
         async with self._lock:
             if inst in self.workers:
                 return
-            cleaned_cfg = self.cfg
+            cleaned_cfg = copy.deepcopy(self.cfg)
             cleaned_cfg["datafeed"]["instIds"] = [inst]
             w = InstrumentWorker(inst, cleaned_cfg, self.redis_dsn, self.stream_name)
             self.workers[inst] = w
